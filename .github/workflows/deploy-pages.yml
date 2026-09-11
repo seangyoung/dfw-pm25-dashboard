@@ -28,8 +28,12 @@ jobs:
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Install the static-site exporter
-        run: Rscript --vanilla -e 'install.packages(c("digest", "shinylive"), repos = "https://cloud.r-project.org")'
+      - name: Install the static-site exporter and system requirements
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::digest
+            any::shinylive
 
       - name: Build and validate the Shinylive site
         run: >-
