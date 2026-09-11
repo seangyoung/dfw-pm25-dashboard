@@ -1,0 +1,33 @@
+Package: dfwpm25dashboard
+Title: DFW PM2.5 Monitor Explorer
+Version: 1.0.0
+Authors@R: person("Sean", "Young", role = c("aut", "cre"))
+Description: A browser-based Shiny dashboard for exploring public TCEQ PM2.5
+    monitoring data from the Dallas-Fort Worth region.
+Encoding: UTF-8
+Depends:
+    R (>= 4.4)
+Imports:
+    bslib,
+    curl,
+    digest,
+    dplyr,
+    DT,
+    ggplot2,
+    htmltools,
+    jsonlite,
+    leaflet,
+    plotly,
+    purrr,
+    readr,
+    rvest,
+    scales,
+    shiny,
+    shinylive,
+    stringr,
+    tibble,
+    tidyr,
+    viridisLite,
+    yaml
+Suggests:
+    renv

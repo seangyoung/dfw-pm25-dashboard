@@ -1,0 +1,11 @@
+project:
+  name: DFW PM2.5 Monitor Explorer
+  version: 1.0.0
+
+paths:
+  raw: data/raw
+  reference: data/reference
+  interim: data/interim
+  derived: data/derived
+  legacy: data/legacy
+  reports: reports

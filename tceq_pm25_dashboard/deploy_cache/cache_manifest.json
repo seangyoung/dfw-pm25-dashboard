@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-11 17:12:20 UTC",
+  "raw_data_dir": "Not included in the deployment bundle",
+  "raw_manifest_path": "download_manifest.csv",
+  "raw_manifest_sha256": "5f1549d0a1050c7b0ee2b26ce1cd431c0e91ee14530b97439ee6637be1b9ebc2",
+  "site_inventory_sha256": "54f6d0a628f6bf5794b4ce5e6bd1283998a4b54d31ed04e8672b14bfae866e76",
+  "station_count": 16,
+  "hourly_composite_rows": 950520,
+  "valid_hourly_values": 886300,
+  "event_count": 1838,
+  "short_spike_events": 1567,
+  "multi_day_events": 271,
+  "first_date": "2000-01-01",
+  "last_date": "2026-08-31",
+  "algorithms": {
+    "composite": "Median of finite regulatory-QA values when available; otherwise median of other finite values with qa_fallback=TRUE",
+    "daily_minimum_valid_hours": 18,
+    "short_spike": "Strictly greater than 35 ug/m3 for a maximal run of 1-5 consecutive hours",
+    "multi_day": "At least two core days with daily max >25 and mean >20 ug/m3; one eligible trough day may bridge"
+  },
+  "cache_files": {
+    "station_index": "station_index.rds",
+    "daily_index": "daily_index.rds",
+    "event_index": "event_index.rds",
+    "sites": ["sites/48_439_3011.rds", "sites/48_113_0050.rds", "sites/48_349_1051.rds", "sites/48_113_1096.rds", "sites/48_121_0034.rds", "sites/48_439_1053.rds", "sites/48_439_1002.rds", "sites/48_439_3009.rds", "sites/48_439_1006.rds", "sites/48_257_0005.rds", "sites/48_113_0069.rds", "sites/48_439_3008.rds", "sites/48_139_0016.rds", "sites/48_139_0015.rds", "sites/48_139_0017.rds", "sites/48_113_3003.rds"]
+  }
+}

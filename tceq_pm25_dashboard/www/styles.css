@@ -1,0 +1,135 @@
+:root {
+  --pm25-ink: #17323a;
+  --pm25-muted: #5e6f75;
+  --pm25-teal: #16697a;
+  --pm25-orange: #d97706;
+  --pm25-soft: #eef5f5;
+  --pm25-warning: #fff5df;
+  --pm25-border: #d7e1e3;
+}
+
+body {
+  color: var(--pm25-ink);
+}
+
+.app-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.app-title > span {
+  font-weight: 600;
+}
+
+.app-title small,
+.site-meta,
+.method-note,
+.cache-note {
+  color: var(--pm25-muted);
+}
+
+.selected-site-name {
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+
+.site-meta {
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+#site_map {
+  border: 1px solid var(--pm25-border);
+  margin: 0.7rem 0 1rem;
+}
+
+.cache-note,
+.cache-alert {
+  font-size: 0.82rem;
+  margin-top: 0.65rem;
+  padding: 0.6rem 0.7rem;
+  border-left: 3px solid var(--pm25-teal);
+  background: var(--pm25-soft);
+}
+
+.cache-alert {
+  border-left-color: var(--pm25-orange);
+  background: var(--pm25-warning);
+}
+
+.download-row {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.8rem;
+}
+
+.download-row .btn {
+  width: 100%;
+}
+
+.bslib-value-box .value-box-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.card-header-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.card-header-controls .form-group {
+  margin-bottom: 0;
+}
+
+.heatmap-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.4rem;
+}
+
+.method-note {
+  font-size: 0.88rem;
+  margin: 0.65rem 0 0;
+}
+
+.event-detail {
+  display: flex;
+  gap: 0.8rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+
+.qa-warning {
+  color: #8a4b08;
+  background: var(--pm25-warning);
+  padding: 0.2rem 0.45rem;
+}
+
+.quality-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.7rem;
+  margin-bottom: 0.85rem;
+}
+
+.quality-summary span {
+  background: var(--pm25-soft);
+  padding: 0.7rem;
+  border-left: 3px solid var(--pm25-teal);
+}
+
+@media (max-width: 768px) {
+  .app-title small {
+    width: 100%;
+  }
+
+  .heatmap-controls {
+    justify-content: flex-start;
+  }
+}
