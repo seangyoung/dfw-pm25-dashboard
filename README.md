@@ -60,11 +60,12 @@ from the committed source and cache.
 ## Publish to GitHub Pages
 
 1. Open **Settings → Pages** and choose **GitHub Actions** as the source.
-2. Open **Actions → Deploy DFW PM2.5 dashboard to GitHub Pages**.
-3. Select **Run workflow**.
+2. Push a reviewed change to `main`, or open **Actions → Deploy DFW PM2.5
+   dashboard to GitHub Pages** and select **Run workflow**.
 
-The deployment is manual so a push does not automatically replace the public
-site. No repository secret is required.
+Reviewed changes pushed to `main` deploy automatically. The manual control can
+rebuild the current commit without another push. No repository secret is
+required.
 
 ## Validation
 

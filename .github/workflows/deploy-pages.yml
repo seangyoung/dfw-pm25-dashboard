@@ -1,8 +1,11 @@
 name: Deploy DFW PM2.5 dashboard to GitHub Pages
 
-# This workflow is deliberately manual so enabling Pages cannot accidentally
-# publish the dashboard or bundled data. See tceq_pm25_dashboard/DEPLOYMENT.md.
+# Publish reviewed changes from main; workflow_dispatch also permits a manual
+# rebuild without changing repository content.
 'on':
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
