@@ -153,6 +153,18 @@ too_long <- try(tceq_validate_heatmap_range(
 ), silent = TRUE)
 stopifnot(inherits(too_long, "try-error"))
 
+app_server_source <- readLines(
+  file.path(find_repo_root(), "R", "tceq_pm25_dashboard_app.R"),
+  warn = FALSE
+)
+stopifnot(
+  any(grepl("World_Light_Gray_Base", app_server_source, fixed = TRUE)),
+  any(grepl("World_Light_Gray_Reference", app_server_source, fixed = TRUE)),
+  !any(grepl("CartoDB.Positron", app_server_source, fixed = TRUE)),
+  file.exists(file.path(find_repo_root(), "deployment", "startup.css")),
+  file.exists(file.path(find_repo_root(), "deployment", "startup.js"))
+)
+
 # Server-level checks use compact in-memory site bundles; no external cache or
 # live TCEQ request is required by the project test suite.
 source(file.path(find_repo_root(), "R", "tceq_pm25_dashboard_app.R"))

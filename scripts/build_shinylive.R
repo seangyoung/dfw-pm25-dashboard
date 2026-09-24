@@ -106,6 +106,47 @@ main <- function() {
     max_filesize = "200M",
     template_params = list(title = "DFW PM2.5 Monitor Explorer")
   )
+
+  startup_dir <- file.path(root, "deployment")
+  startup_files <- c("startup.css", "startup.js")
+  for (name in startup_files) {
+    copy_checked(
+      file.path(startup_dir, name),
+      file.path(temporary_output, name)
+    )
+  }
+  index_path <- file.path(temporary_output, "index.html")
+  index_html <- paste(readLines(index_path, warn = FALSE), collapse = "\n")
+  if (!grepl("</head>", index_html, fixed = TRUE) ||
+      !grepl("<body>", index_html, fixed = TRUE) ||
+      !grepl("</body>", index_html, fixed = TRUE)) {
+    stop("The exported Shinylive index does not contain the expected HTML tags.")
+  }
+  startup_markup <- paste0(
+    '<div id="dfw-startup" role="status" aria-live="polite">',
+    '<div class="dfw-startup-card">',
+    '<div class="dfw-startup-spinner" aria-hidden="true"></div>',
+    '<h1>DFW PM2.5 Monitor Explorer</h1>',
+    '<p id="dfw-startup-status">Loading the browser-based R environment and monitoring data&hellip;</p>',
+    '<p class="dfw-startup-note">First load may take 30&ndash;60 seconds. ',
+    '<strong>Chrome or Edge is recommended.</strong> Safari may not load this WebAssembly application reliably.</p>',
+    '</div></div>'
+  )
+  index_html <- sub(
+    "</head>",
+    '  <link rel="stylesheet" href="./startup.css" />\n</head>',
+    index_html, fixed = TRUE
+  )
+  index_html <- sub(
+    "<body>", paste0("<body>\n    ", startup_markup),
+    index_html, fixed = TRUE
+  )
+  index_html <- sub(
+    "</body>", '  <script src="./startup.js"></script>\n</body>',
+    index_html, fixed = TRUE
+  )
+  writeLines(index_html, index_path, useBytes = TRUE)
+
   if (dir.exists(output_dir)) unlink(output_dir, recursive = TRUE)
   if (!file.rename(temporary_output, output_dir)) {
     stop("Could not atomically replace Shinylive output at ", output_dir, ".")

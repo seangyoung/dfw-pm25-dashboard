@@ -229,7 +229,24 @@ tceq_dashboard_server <- function(
       )
       focus <- locations[locations$aqs_site_id == selected, , drop = FALSE]
       leaflet::leaflet(locations) |>
-        leaflet::addProviderTiles(leaflet::providers$CartoDB.Positron) |>
+        leaflet::addTiles(
+          urlTemplate = paste0(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/",
+            "Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+          ),
+          attribution = paste0(
+            "Tiles &copy; Esri, HERE, Garmin, OpenStreetMap contributors, ",
+            "and the GIS user community"
+          ),
+          options = leaflet::tileOptions(maxZoom = 16L)
+        ) |>
+        leaflet::addTiles(
+          urlTemplate = paste0(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/",
+            "Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}"
+          ),
+          options = leaflet::tileOptions(maxZoom = 16L)
+        ) |>
         leaflet::addCircleMarkers(
           lng = ~longitude, lat = ~latitude, layerId = ~aqs_site_id,
           radius = marker_radius, color = marker_colors, weight = 2,

@@ -43,6 +43,17 @@ shiny::runApp("tceq_pm25_dashboard")
 The included cache is used automatically; the original monthly CSV collection
 is not required for dashboard use.
 
+## Browser compatibility
+
+Current Chrome or Edge is recommended. The dashboard runs R in the browser
+through WebAssembly and may not initialize reliably in Safari. A startup screen
+remains visible while the browser downloads and initializes the R runtime; the
+first load may take 30–60 seconds.
+
+The station map uses Esri's public World Light Gray Canvas raster tiles and
+displays the provider attribution. The service does not require a CARTO API
+key.
+
 ## Build the browser-only site
 
 ```r
