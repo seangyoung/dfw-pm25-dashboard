@@ -164,6 +164,14 @@ stopifnot(
   file.exists(file.path(find_repo_root(), "deployment", "startup.css")),
   file.exists(file.path(find_repo_root(), "deployment", "startup.js"))
 )
+build_source <- readLines(
+  file.path(find_repo_root(), "scripts", "build_shinylive.R"),
+  warn = FALSE
+)
+stopifnot(
+  any(grepl('fetch("./app.json?v=%s")', build_source, fixed = TRUE)),
+  any(grepl("versioned_assets", build_source, fixed = TRUE))
+)
 
 # Server-level checks use compact in-memory site bundles; no external cache or
 # live TCEQ request is required by the project test suite.

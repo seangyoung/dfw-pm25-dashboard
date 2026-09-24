@@ -107,6 +107,22 @@ main <- function() {
     template_params = list(title = "DFW PM2.5 Monitor Explorer")
   )
 
+  app_json_path <- file.path(temporary_output, "app.json")
+  app_version <- substr(sha256_file(app_json_path), 1L, 12L)
+  runtime_path <- file.path(temporary_output, "shinylive", "shinylive.js")
+  runtime_js <- paste(readLines(runtime_path, warn = FALSE), collapse = "\n")
+  app_fetch <- 'fetch("./app.json")'
+  if (!grepl(app_fetch, runtime_js, fixed = TRUE)) {
+    stop("Could not locate the app.json request in the exported Shinylive runtime.")
+  }
+  runtime_js <- sub(
+    app_fetch,
+    sprintf('fetch("./app.json?v=%s")', app_version),
+    runtime_js,
+    fixed = TRUE
+  )
+  writeLines(runtime_js, runtime_path, useBytes = TRUE)
+
   startup_dir <- file.path(root, "deployment")
   startup_files <- c("startup.css", "startup.js")
   for (name in startup_files) {
@@ -145,6 +161,20 @@ main <- function() {
     "</body>", '  <script src="./startup.js"></script>\n</body>',
     index_html, fixed = TRUE
   )
+  versioned_assets <- c(
+    "./shinylive/load-shinylive-sw.js",
+    "./shinylive/shinylive.js",
+    "./startup.css",
+    "./startup.js"
+  )
+  for (asset in versioned_assets) {
+    index_html <- gsub(
+      asset,
+      paste0(asset, "?v=", app_version),
+      index_html,
+      fixed = TRUE
+    )
+  }
   writeLines(index_html, index_path, useBytes = TRUE)
 
   if (dir.exists(output_dir)) unlink(output_dir, recursive = TRUE)
