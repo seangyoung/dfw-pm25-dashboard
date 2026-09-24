@@ -123,7 +123,13 @@ ui <- bslib::page_sidebar(
   theme = theme,
   fillable = TRUE,
   shiny::tags$head(
-    shiny::tags$link(rel = "stylesheet", type = "text/css", href = "styles.css")
+    shiny::tags$link(rel = "stylesheet", type = "text/css", href = "styles.css"),
+    shiny::tags$script(shiny::HTML(
+      "Shiny.addCustomMessageHandler('tceq-set-disabled', function(message) {\n",
+      "  var element = document.getElementById(message.id);\n",
+      "  if (element) element.disabled = Boolean(message.disabled);\n",
+      "});"
+    ))
   ),
   sidebar = bslib::sidebar(
     width = 370,
@@ -132,12 +138,39 @@ ui <- bslib::page_sidebar(
     ),
     shiny::uiOutput("site_details"),
     leaflet::leafletOutput("site_map", height = 310),
+    shiny::tags$label(
+      class = "date-window-label", `for` = "date_window_days", "Date window"
+    ),
+    shiny::div(
+      class = "date-window-controls",
+      shiny::actionButton(
+        "date_previous", NULL, icon = shiny::icon("chevron-left"),
+        title = "Move to the preceding window", `aria-label` = "Earlier period"
+      ),
+      shiny::selectInput(
+        "date_window_days", NULL,
+        choices = c(
+          "7 days" = "7", "14 days" = "14", "30 days" = "30",
+          "60 days" = "60", "90 days" = "90"
+        ),
+        selected = "30", width = "100%"
+      ),
+      shiny::actionButton(
+        "date_next", NULL, icon = shiny::icon("chevron-right"),
+        title = "Move to the following window", `aria-label` = "Later period"
+      ),
+      shiny::actionButton(
+        "date_latest", "Latest", title = "Return to the latest available data"
+      )
+    ),
     shiny::dateRangeInput(
-      "date_range", "Overview and heatmap dates",
+      "date_range", "Exact dates",
       start = default_dates[1], end = default_dates[2],
-      min = min(default_bundle$hourly$date), max = max(default_bundle$hourly$date),
+      min = tceq_dashboard_date_bounds(default_bundle)[1],
+      max = tceq_dashboard_date_bounds(default_bundle)[2],
       format = "yyyy-mm-dd", separator = " to "
     ),
+    shiny::uiOutput("date_window_summary"),
     shiny::helpText("The temporal heatmap is limited to 90 days."),
     shiny::uiOutput("cache_status"),
     shiny::div(

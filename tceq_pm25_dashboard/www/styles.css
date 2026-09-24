@@ -45,6 +45,39 @@ body {
   margin: 0.7rem 0 1rem;
 }
 
+.date-window-label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.date-window-controls {
+  align-items: start;
+  display: grid;
+  gap: 0.35rem;
+  grid-template-columns: 2.55rem minmax(7rem, 1fr) 2.55rem auto;
+  margin-bottom: 0.65rem;
+}
+
+.date-window-controls .form-group {
+  margin-bottom: 0;
+}
+
+.date-window-controls .btn {
+  min-height: 38px;
+}
+
+.date-window-summary {
+  color: var(--pm25-ink);
+  font-size: 0.84rem;
+  line-height: 1.4;
+  margin-top: -0.35rem;
+}
+
+.date-window-available {
+  color: var(--pm25-muted);
+}
+
 .cache-note,
 .cache-alert {
   font-size: 0.82rem;

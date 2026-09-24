@@ -176,6 +176,31 @@ stopifnot(
 # Server-level checks use compact in-memory site bundles; no external cache or
 # live TCEQ request is required by the project test suite.
 source(file.path(find_repo_root(), "R", "tceq_pm25_dashboard_app.R"))
+window_bounds <- as.Date(c("2024-01-01", "2024-06-30"))
+latest_30 <- tceq_dashboard_window_dates(
+  window_bounds[1], window_bounds[2], 30L, window_bounds[2]
+)
+stopifnot(
+  identical(latest_30, as.Date(c("2024-06-01", "2024-06-30"))),
+  identical(
+    tceq_dashboard_shift_dates(latest_30, window_bounds[1], window_bounds[2], -1L),
+    as.Date(c("2024-05-02", "2024-05-31"))
+  ),
+  identical(
+    tceq_dashboard_shift_dates(
+      as.Date(c("2024-01-01", "2024-01-30")),
+      window_bounds[1], window_bounds[2], -1L
+    ),
+    as.Date(c("2024-01-01", "2024-01-30"))
+  ),
+  identical(
+    tceq_dashboard_window_dates(
+      as.Date("2024-01-01"), as.Date("2024-01-10"), 30L,
+      as.Date("2024-01-10")
+    ),
+    as.Date(c("2024-01-01", "2024-01-10"))
+  )
+)
 server_hourly_a <- make_hourly_test(c(40, 41, rep(10, 46)))
 server_hourly_b <- make_hourly_test(rep(12, 48))
 make_server_bundle <- function(site_id, hourly) {

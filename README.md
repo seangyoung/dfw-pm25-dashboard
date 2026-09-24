@@ -5,9 +5,10 @@ measurements from Texas Commission on Environmental Quality monitoring sites in
 the Dallas-Fort Worth region.
 
 The dashboard includes synchronized map and dropdown station selection, hourly
-date-by-hour heatmaps, long-term patterns, data-quality diagnostics, and
-exploratory event screening. It runs entirely in the browser through Shinylive;
-no server-side R session receives user activity or data.
+date-by-hour heatmaps, navigable 7–90 day windows, long-term patterns,
+data-quality diagnostics, and exploratory event screening. It runs entirely in
+the browser through Shinylive; no server-side R session receives user activity
+or data.
 
 ## Event definitions
 

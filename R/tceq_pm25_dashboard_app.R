@@ -13,10 +13,58 @@ tceq_dashboard_default_site <- function(station_index) {
 }
 
 tceq_dashboard_default_dates <- function(bundle, days = 30L) {
-  finite <- bundle$hourly$date[is.finite(bundle$hourly$composite_pm25_ug_m3)]
-  end_date <- if (length(finite)) max(finite) else max(bundle$hourly$date)
-  start_date <- max(min(bundle$hourly$date), end_date - (days - 1L))
+  bounds <- tceq_dashboard_date_bounds(bundle)
+  tceq_dashboard_window_dates(bounds[1], bounds[2], days, bounds[2])
+}
+
+tceq_dashboard_date_bounds <- function(bundle) {
+  dates <- as.Date(bundle$hourly$date)
+  if (!length(dates) || all(is.na(dates))) {
+    stop("The site bundle does not contain usable hourly dates.")
+  }
+  finite <- dates[is.finite(bundle$hourly$composite_pm25_ug_m3)]
+  last_date <- if (length(finite)) max(finite, na.rm = TRUE) else max(dates, na.rm = TRUE)
+  as.Date(c(min(dates, na.rm = TRUE), last_date))
+}
+
+tceq_dashboard_window_dates <- function(
+    first_date, last_date, days = 30L, end_date = last_date) {
+  first_date <- as.Date(first_date)[1]
+  last_date <- as.Date(last_date)[1]
+  end_date <- as.Date(end_date)[1]
+  days <- suppressWarnings(as.integer(days)[1])
+  if (anyNA(c(first_date, last_date, end_date)) || first_date > last_date) {
+    stop("Date-window bounds must be valid dates in chronological order.")
+  }
+  if (is.na(days) || days < 1L || days > 90L) {
+    stop("Date-window length must be between 1 and 90 days.")
+  }
+
+  coverage_days <- as.integer(last_date - first_date) + 1L
+  span_days <- min(days, coverage_days)
+  end_date <- min(max(end_date, first_date), last_date)
+  start_date <- end_date - (span_days - 1L)
+  if (start_date < first_date) {
+    start_date <- first_date
+    end_date <- first_date + (span_days - 1L)
+  }
   as.Date(c(start_date, end_date))
+}
+
+tceq_dashboard_shift_dates <- function(dates, first_date, last_date, direction) {
+  dates <- as.Date(dates)
+  if (length(dates) != 2L || anyNA(dates) || dates[1] > dates[2]) {
+    stop("The current date window must contain a valid start and end date.")
+  }
+  direction <- suppressWarnings(as.integer(direction)[1])
+  if (is.na(direction) || !direction %in% c(-1L, 1L)) {
+    stop("Date-window direction must be -1 or 1.")
+  }
+  span_days <- as.integer(dates[2] - dates[1]) + 1L
+  tceq_dashboard_window_dates(
+    first_date, last_date, span_days,
+    dates[2] + direction * span_days
+  )
 }
 
 tceq_dashboard_event_table <- function(events) {
@@ -121,16 +169,48 @@ tceq_dashboard_server <- function(
   force(cache_stale)
 
   function(input, output, session) {
-    rv <- shiny::reactiveValues(site = tceq_dashboard_default_site(station_index))
+    rv <- shiny::reactiveValues(
+      site = tceq_dashboard_default_site(station_index),
+      window_days = 30L,
+      pending_date_range = NULL
+    )
 
     selected_site <- shiny::reactive(rv$site)
     site_record <- shiny::reactive({
       station_index[station_index$aqs_site_id == selected_site(), , drop = FALSE]
     })
     site_bundle <- shiny::reactive(load_bundle(selected_site()))
+    date_bounds <- shiny::reactive(tceq_dashboard_date_bounds(site_bundle()))
+
+    input_date_range <- function() {
+      dates <- input$date_range
+      if (is.null(dates) || length(dates) != 2L) return(NULL)
+      dates <- suppressWarnings(as.Date(dates))
+      if (anyNA(dates) || dates[1] > dates[2]) return(NULL)
+      dates
+    }
+
+    remember_current_window <- function() {
+      dates <- input_date_range()
+      if (is.null(dates)) return(invisible(NULL))
+      days <- as.integer(dates[2] - dates[1]) + 1L
+      if (days >= 1L && days <= 90L) rv$window_days <- days
+      invisible(NULL)
+    }
+
+    update_date_window <- function(dates, bounds = date_bounds()) {
+      dates <- as.Date(dates)
+      rv$pending_date_range <- as.character(dates)
+      shiny::updateDateRangeInput(
+        session, "date_range", start = dates[1], end = dates[2],
+        min = bounds[1], max = bounds[2]
+      )
+      invisible(dates)
+    }
 
     shiny::observeEvent(input$site, {
       if (!is.null(input$site) && input$site %in% station_index$aqs_site_id) {
+        if (!identical(input$site, rv$site)) remember_current_window()
         rv$site <- input$site
       }
     }, ignoreInit = FALSE)
@@ -138,6 +218,7 @@ tceq_dashboard_server <- function(
     shiny::observeEvent(input$site_map_marker_click, {
       clicked <- input$site_map_marker_click$id
       if (!is.null(clicked) && clicked %in% station_index$aqs_site_id) {
+        if (!identical(clicked, rv$site)) remember_current_window()
         rv$site <- clicked
         shiny::updateSelectInput(session, "site", selected = clicked)
       }
@@ -145,13 +226,67 @@ tceq_dashboard_server <- function(
 
     shiny::observeEvent(selected_site(), {
       bundle <- site_bundle()
-      default_dates <- tceq_dashboard_default_dates(bundle)
+      bounds <- tceq_dashboard_date_bounds(bundle)
+      default_dates <- tceq_dashboard_default_dates(bundle, rv$window_days)
       shiny::updateSelectInput(session, "site", selected = selected_site())
-      shiny::updateDateRangeInput(
-        session, "date_range", start = default_dates[1], end = default_dates[2],
-        min = min(bundle$hourly$date), max = max(bundle$hourly$date)
+      update_date_window(default_dates, bounds)
+    }, ignoreInit = FALSE)
+
+    shiny::observeEvent(input$date_range, {
+      dates <- input_date_range()
+      if (is.null(dates)) return()
+      incoming <- as.character(dates)
+      if (!is.null(rv$pending_date_range) &&
+          identical(incoming, rv$pending_date_range)) {
+        rv$pending_date_range <- NULL
+      } else {
+        rv$pending_date_range <- NULL
+        days <- as.integer(dates[2] - dates[1]) + 1L
+        if (days >= 1L && days <= 90L) rv$window_days <- days
+      }
+
+      days <- as.integer(dates[2] - dates[1]) + 1L
+      presets <- c(7L, 14L, 30L, 60L, 90L)
+      choices <- stats::setNames(as.character(presets), paste(presets, "days"))
+      selected <- as.character(days)
+      if (!days %in% presets) {
+        choices <- c(choices, stats::setNames("custom", paste0("Custom (", days, " days)")))
+        selected <- "custom"
+      }
+      shiny::updateSelectInput(
+        session, "date_window_days", choices = choices, selected = selected
       )
     }, ignoreInit = FALSE)
+
+    shiny::observeEvent(input$date_window_days, {
+      if (is.null(input$date_window_days) || input$date_window_days == "custom") return()
+      days <- suppressWarnings(as.integer(input$date_window_days))
+      if (is.na(days) || !days %in% c(7L, 14L, 30L, 60L, 90L)) return()
+      rv$window_days <- days
+      dates <- input_date_range()
+      anchor <- if (is.null(dates)) date_bounds()[2] else dates[2]
+      update_date_window(tceq_dashboard_window_dates(
+        date_bounds()[1], date_bounds()[2], days, anchor
+      ))
+    }, ignoreInit = TRUE)
+
+    shiny::observeEvent(input$date_previous, {
+      update_date_window(tceq_dashboard_shift_dates(
+        selected_dates(), date_bounds()[1], date_bounds()[2], -1L
+      ))
+    }, ignoreInit = TRUE)
+
+    shiny::observeEvent(input$date_next, {
+      update_date_window(tceq_dashboard_shift_dates(
+        selected_dates(), date_bounds()[1], date_bounds()[2], 1L
+      ))
+    }, ignoreInit = TRUE)
+
+    shiny::observeEvent(input$date_latest, {
+      update_date_window(tceq_dashboard_default_dates(
+        site_bundle(), rv$window_days
+      ))
+    }, ignoreInit = TRUE)
 
     selected_dates <- shiny::reactive({
       bundle <- site_bundle()
@@ -169,6 +304,42 @@ tceq_dashboard_server <- function(
         "The selected dates must fall within this site's data coverage."
       ))
       dates
+    })
+
+    output$date_window_summary <- shiny::renderUI({
+      dates <- selected_dates()
+      bounds <- date_bounds()
+      pretty_date <- function(x) sub(" 0", " ", format(x, "%b %d, %Y"), fixed = TRUE)
+      days <- as.integer(dates[2] - dates[1]) + 1L
+      shiny::div(
+        class = "date-window-summary",
+        shiny::div(sprintf(
+          "Showing %s–%s · %d %s",
+          pretty_date(dates[1]), pretty_date(dates[2]), days,
+          if (days == 1L) "day" else "days"
+        )),
+        shiny::div(
+          class = "date-window-available",
+          sprintf(
+            "Available %s–%s",
+            pretty_date(bounds[1]), pretty_date(bounds[2])
+          )
+        )
+      )
+    })
+
+    shiny::observe({
+      dates <- selected_dates()
+      bounds <- date_bounds()
+      session$sendCustomMessage("tceq-set-disabled", list(
+        id = "date_previous", disabled = dates[1] <= bounds[1]
+      ))
+      session$sendCustomMessage("tceq-set-disabled", list(
+        id = "date_next", disabled = dates[2] >= bounds[2]
+      ))
+      session$sendCustomMessage("tceq-set-disabled", list(
+        id = "date_latest", disabled = dates[2] >= bounds[2]
+      ))
     })
 
     filtered_hourly <- shiny::reactive({
