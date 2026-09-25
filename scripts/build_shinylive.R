@@ -13,15 +13,16 @@ source(file.path(root, "R", "tceq_pm25_dashboard.R"))
 
 main <- function() {
   args <- commandArgs(trailingOnly = TRUE)
+  validate_only <- "--validate-only" %in% args
   cache_arg <- grep("^--cache-dir=", args, value = TRUE)
   output_arg <- grep("^--output-dir=", args, value = TRUE)
   if (length(cache_arg) > 1L || length(output_arg) > 1L) {
     stop("Specify --cache-dir and --output-dir no more than once.")
   }
-  unknown <- setdiff(args, c(cache_arg, output_arg))
+  unknown <- setdiff(args, c("--validate-only", cache_arg, output_arg))
   if (length(unknown)) stop("Unknown arguments: ", paste(unknown, collapse = ", "))
 
-  require_packages(c("digest", "jsonlite", "shinylive"))
+  require_packages(c("digest", "jsonlite"))
   cache_dir <- if (length(cache_arg)) {
     normalizePath(sub("^--cache-dir=", "", cache_arg), mustWork = TRUE)
   } else {
@@ -41,9 +42,9 @@ main <- function() {
     stop("Dashboard cache is incomplete: ", cache_dir)
   }
   stations <- readRDS(file.path(cache_dir, "station_index.rds"))
-  if (nrow(stations) != 16L || anyNA(stations$latitude) ||
+  if (!nrow(stations) || anyNA(stations$latitude) ||
       anyNA(stations$longitude) || anyDuplicated(stations$aqs_site_id)) {
-    stop("Dashboard cache must contain 16 unique sites with coordinates.")
+    stop("Dashboard cache must contain unique PM2.5 sites with coordinates.")
   }
   site_paths <- file.path(cache_dir, stations$site_cache_file)
   if (!all(file.exists(site_paths))) {
@@ -53,6 +54,13 @@ main <- function() {
   if (!identical(unname(hashes), unname(stations$site_cache_sha256))) {
     stop("One or more site bundles do not match the station-index hashes.")
   }
+
+  if (validate_only) {
+    message("Deployment cache validated: ", cache_dir)
+    return(invisible(cache_dir))
+  }
+
+  require_packages("shinylive")
 
   stage <- tempfile("dfw_pm25_shinylive_app_")
   on.exit(unlink(stage, recursive = TRUE), add = TRUE)

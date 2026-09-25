@@ -118,7 +118,9 @@ ui <- bslib::page_sidebar(
   title = shiny::div(
     class = "app-title",
     shiny::span("DFW PM2.5 Monitor Explorer"),
-    shiny::tags$small("TCEQ hourly monitoring data · local standard time")
+    shiny::tags$small(
+      "TCEQ hourly monitoring data · parameter 88101 with 88502 fallback · local standard time"
+    )
   ),
   theme = theme,
   fillable = TRUE,
@@ -304,7 +306,11 @@ ui <- bslib::page_sidebar(
       ),
       shiny::p(
         class = "method-note",
-        "Negative and character-coded cells remain in the raw cache with explicit flags and are excluded from numeric calculations. TCEQ notes that current monitoring data are unofficial until certified."
+        paste(
+          "Parameter 88101 is preferred for every site-hour; acceptable parameter 88502 is used only when 88101 is unavailable.",
+          "Negative and character-coded cells remain in the raw cache with explicit flags and are excluded from numeric calculations.",
+          "TCEQ notes that current monitoring data are unofficial until certified."
+        )
       )
     )
   )

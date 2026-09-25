@@ -101,6 +101,8 @@ tceq_dashboard_event_table <- function(events) {
       `Peak daily max` = round(.data$peak_daily_max_ug_m3, 1),
       `Highest daily avg` = round(.data$max_daily_avg_ug_m3, 1),
       `QA note` = dplyr::case_when(
+        .data$parameter_fallback & .data$qa_fallback ~ "Includes 88502 parameter fallback and QA-fallback values",
+        .data$parameter_fallback ~ "Includes 88502 parameter-fallback values",
         .data$qa_fallback ~ "Includes QA-fallback values",
         .data$coverage_warning ~ "Some event days have fewer than 24 valid hours",
         TRUE ~ ""
@@ -113,7 +115,7 @@ tceq_dashboard_raw_choices <- function(raw) {
   choices <- raw |>
     dplyr::distinct(
       .data$raw_series_key, .data$source_file, .data$report_block, .data$poc,
-      .data$regulatory_qa
+      .data$parameter_code, .data$regulatory_qa
     ) |>
     dplyr::arrange(.data$source_file, .data$poc, .data$report_block) |>
     dplyr::mutate(
@@ -123,9 +125,9 @@ tceq_dashboard_raw_choices <- function(raw) {
         TRUE ~ "QA status unavailable"
       ),
       label = sprintf(
-        "%s · POC %s · report table %s · %s",
+        "%s · parameter %s · POC %s · report table %s · %s",
         sub("^cams_[0-9]+_|_pm25\\.csv$", "", .data$source_file),
-        .data$poc, .data$report_block, .data$qa_label
+        .data$parameter_code, .data$poc, .data$report_block, .data$qa_label
       )
     )
   stats::setNames(choices$raw_series_key, choices$label)
@@ -144,17 +146,19 @@ tceq_dashboard_yearly_quality <- function(bundle) {
     year_end <- min(last_date, as.Date(sprintf("%d-12-31", year)))
     expected <- (as.integer(year_end - year_start) + 1L) * 24L
     x <- hourly[hourly$date >= year_start & hourly$date <= year_end, , drop = FALSE]
-    regulatory <- sum(
-      is.finite(x$composite_pm25_ug_m3) & !x$qa_fallback, na.rm = TRUE
+    primary <- sum(
+      is.finite(x$composite_pm25_ug_m3) &
+        x$selected_parameter_code == "88101", na.rm = TRUE
     )
-    fallback <- sum(
-      is.finite(x$composite_pm25_ug_m3) & x$qa_fallback, na.rm = TRUE
+    acceptable <- sum(
+      is.finite(x$composite_pm25_ug_m3) &
+        x$selected_parameter_code == "88502", na.rm = TRUE
     )
     tibble::tibble(
-      year = year, expected_hours = expected, regulatory_hours = regulatory,
-      fallback_hours = fallback,
-      missing_hours = max(0L, expected - regulatory - fallback),
-      valid_percent = 100 * (regulatory + fallback) / expected
+      year = year, expected_hours = expected, primary_88101_hours = primary,
+      fallback_88502_hours = acceptable,
+      missing_hours = max(0L, expected - primary - acceptable),
+      valid_percent = 100 * (primary + acceptable) / expected
     )
   })
 }
@@ -670,6 +674,9 @@ tceq_dashboard_server <- function(
             paste(event$start_date, "to", event$end_date, "·", event$span_days, "days")
           }
         ),
+        if (event$parameter_fallback) {
+          shiny::span(class = "qa-warning", "Includes parameter 88502 fallback values")
+        },
         if (event$qa_fallback) shiny::span(class = "qa-warning", "Includes QA-fallback values")
       )
     })
@@ -688,10 +695,13 @@ tceq_dashboard_server <- function(
         p, data = hourly, x = ~datetime_lstd, y = ~composite_pm25_ug_m3,
         name = "Site composite", line = list(color = "#16697A", width = 2.5),
         text = ~sprintf(
-          "%s LST<br>Composite: %.1f µg/m³<br>Contributors: %d<br>%s",
+          "%s LST<br>Composite: %.1f µg/m³<br>Parameter: %s<br>Contributors: %d<br>%s",
           format(datetime_lstd, "%Y-%m-%d %H:00", tz = "UTC"),
-          composite_pm25_ug_m3, contributing_records,
-          ifelse(qa_fallback, "QA fallback", "Regulatory-QA preferred")
+          composite_pm25_ug_m3, selected_parameter_code, contributing_records,
+          ifelse(
+            qa_fallback, "QA fallback",
+            ifelse(qa_status_unavailable, "QA status unavailable", "QA-preferred record")
+          )
         ), hoverinfo = "text", connectgaps = FALSE
       )
       selected_raw <- input$raw_series
@@ -709,10 +719,11 @@ tceq_dashboard_server <- function(
             p, data = one, x = ~datetime_lstd, y = ~pm25_ug_m3,
             name = label, line = list(width = 1, dash = "dot"),
             text = ~sprintf(
-              "%s LST<br>Raw: %s<br>POC %d · table %d<br>Flag: %s",
+              "%s LST<br>Raw: %s<br>Parameter %s · POC %d · table %d<br>Flag: %s",
               format(datetime_lstd, "%Y-%m-%d %H:00", tz = "UTC"),
               ifelse(is.finite(pm25_ug_m3), sprintf("%.1f µg/m³", pm25_ug_m3), pm25_raw),
-              poc, report_block, ifelse(is.na(value_flag), "none", value_flag)
+              parameter_code, poc, report_block,
+              ifelse(is.na(value_flag), "none", value_flag)
             ), hoverinfo = "text", connectgaps = FALSE
           )
         }
@@ -856,15 +867,15 @@ tceq_dashboard_server <- function(
     output$quality_plot <- plotly::renderPlotly({
       x <- yearly_quality() |>
         tidyr::pivot_longer(
-          c("regulatory_hours", "fallback_hours", "missing_hours"),
+          c("primary_88101_hours", "fallback_88502_hours", "missing_hours"),
           names_to = "category", values_to = "hours"
         ) |>
         dplyr::mutate(
           percent = 100 * .data$hours / .data$expected_hours,
           category = factor(
             .data$category,
-            levels = c("regulatory_hours", "fallback_hours", "missing_hours"),
-            labels = c("Regulatory-QA preferred", "QA fallback", "Missing / flagged")
+            levels = c("primary_88101_hours", "fallback_88502_hours", "missing_hours"),
+            labels = c("Parameter 88101", "Parameter 88502 fallback", "Missing / flagged")
           )
         )
       p <- plotly::plot_ly(
@@ -888,9 +899,14 @@ tceq_dashboard_server <- function(
       negative <- sum(raw$value_flag == "NEG", na.rm = TRUE)
       character_flags <- sum(!is.na(raw$value_flag) & raw$value_flag != "NEG")
       fallback <- sum(hourly$qa_fallback & finite)
+      parameter_fallback <- sum(hourly$parameter_fallback & finite)
       shiny::div(
         class = "quality-summary",
         shiny::span(shiny::strong(format(sum(finite), big.mark = ",")), " valid composite hours"),
+        shiny::span(
+          shiny::strong(format(parameter_fallback, big.mark = ",")),
+          " parameter-88502 fallback hours"
+        ),
         shiny::span(shiny::strong(format(fallback, big.mark = ",")), " QA-fallback hours"),
         shiny::span(shiny::strong(format(negative, big.mark = ",")), " negative raw cells"),
         shiny::span(shiny::strong(format(character_flags, big.mark = ",")), " character-coded raw cells")

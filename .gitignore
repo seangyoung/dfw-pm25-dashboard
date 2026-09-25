@@ -5,3 +5,5 @@
 renv/library/
 renv/staging/
 _site/
+/data/raw/
+/data/derived/

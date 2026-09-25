@@ -23,8 +23,10 @@ determinations or evidence of a particular emissions source.
 
 ## Data and provenance
 
-The versioned deployment cache contains public TCEQ monitoring data for 16
-physical monitoring locations. It preserves underlying report-table records,
+The versioned deployment cache contains public TCEQ monitoring data for 17
+physical monitoring locations. The site-hour composite prefers regulatory
+parameter 88101 and uses acceptable parameter 88502 only when no finite 88101
+measurement is available. It preserves underlying report-table records,
 data-quality flags, POC, report block, QA status, source filenames, station
 metadata provenance, and file hashes. Timestamps are presented as local
 standard time without daylight-saving shifts.
@@ -43,6 +45,22 @@ shiny::runApp("tceq_pm25_dashboard")
 
 The included cache is used automatically; the original monthly CSV collection
 is not required for dashboard use.
+
+## Refresh the source data
+
+The reproducible acquisition and preparation scripts are included. From the
+repository root, the default workflow discovers both PM2.5 parameter streams,
+downloads through the most recent complete month, imports the reports, and
+rebuilds the local cache:
+
+```sh
+Rscript --vanilla scripts/08a_acquire_tceq_dfw_pm25_monthly.R --reuse-inventory
+Rscript --vanilla scripts/08c_prepare_tceq_dfw_pm25_dashboard.R
+```
+
+Parameter 88101 remains primary at each site-hour; parameter 88502 is retained
+and used only as a fallback. Raw parameter codes, POCs, report tables, QA
+statements, flags, and source filenames remain available for diagnostics.
 
 ## Browser compatibility
 
@@ -83,7 +101,8 @@ required.
 
 ```sh
 Rscript --vanilla scripts/run_tests.R
+Rscript --vanilla scripts/build_shinylive.R --validate-only
 ```
 
-The application validates the 16 station bundles and their SHA-256 hashes
+The application validates the station bundles and their SHA-256 hashes
 before creating a browser deployment.

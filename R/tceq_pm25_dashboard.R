@@ -151,8 +151,8 @@ tceq_build_station_metadata <- function(inventory, fetcher = tceq_fetch_site_htm
   canonical <- inventory |>
     dplyr::filter(.data$download_selected %in% TRUE) |>
     dplyr::arrange(.data$aqs_site_id)
-  if (nrow(canonical) != 16L || anyDuplicated(canonical$aqs_site_id)) {
-    stop("Expected 16 unique canonical DFW PM2.5 monitoring sites.")
+  if (!nrow(canonical) || anyDuplicated(canonical$aqs_site_id)) {
+    stop("Expected one canonical CAMS record per DFW PM2.5 monitoring site.")
   }
   aliases <- inventory |>
     dplyr::filter(.data$aqs_site_id %in% canonical$aqs_site_id) |>
@@ -183,15 +183,16 @@ tceq_build_hourly_composite <- function(raw) {
   require_packages(c("dplyr", "tibble"))
   required <- c(
     "aqs_site_id", "site_name", "date", "hour", "hour_lstd", "pm25_ug_m3",
-    "value_flag", "poc", "source_file", "report_block", "regulatory_qa"
+    "value_flag", "poc", "source_file", "report_block", "regulatory_qa",
+    "parameter_code"
   )
   tceq_assert_columns(raw, required, "Imported hourly TCEQ data")
   keyed <- raw |>
     dplyr::mutate(
       date = as.Date(.data$date),
       finite_value = is.finite(.data$pm25_ug_m3),
-      regulatory_value = .data$finite_value & !is.na(.data$regulatory_qa) &
-        .data$regulatory_qa,
+      primary_value = .data$finite_value & .data$parameter_code == "88101",
+      acceptable_value = .data$finite_value & .data$parameter_code == "88502",
       raw_series_key = tceq_raw_series_key(
         .data$source_file, .data$report_block, .data$poc
       )
@@ -202,18 +203,45 @@ tceq_build_hourly_composite <- function(raw) {
     dplyr::summarise(
       total_records = dplyr::n(),
       available_records = sum(.data$finite_value),
-      has_regulatory_value = any(.data$regulatory_value),
+      primary_records = sum(.data$primary_value),
+      acceptable_records = sum(.data$acceptable_value),
+      has_primary_value = any(.data$primary_value),
+      has_acceptable_value = any(.data$acceptable_value),
       value_flag_summary = tceq_collapse_values(.data$value_flag),
       .groups = "drop"
+    ) |>
+    dplyr::mutate(
+      selected_parameter_code = dplyr::case_when(
+        .data$has_primary_value ~ "88101",
+        .data$has_acceptable_value ~ "88502",
+        TRUE ~ NA_character_
+      ),
+      has_regulatory_value = .data$has_primary_value
     )
-  selected <- keyed |>
+  candidates <- keyed |>
     dplyr::left_join(
-      status |> dplyr::select(dplyr::all_of(c(keys, "has_regulatory_value"))),
+      status |>
+        dplyr::select(dplyr::all_of(c(keys, "selected_parameter_code"))),
       by = keys
     ) |>
+    dplyr::mutate(
+      selected_parameter_value = .data$finite_value &
+        .data$parameter_code == .data$selected_parameter_code
+    ) |>
+    dplyr::group_by(dplyr::across(dplyr::all_of(keys))) |>
+    dplyr::mutate(
+      has_qa_preferred_value = any(
+        .data$selected_parameter_value & .data$regulatory_qa %in% TRUE
+      ),
+      has_explicit_nonqa_value = any(
+        .data$selected_parameter_value & .data$regulatory_qa %in% FALSE
+      )
+    ) |>
+    dplyr::ungroup()
+  selected <- candidates |>
     dplyr::filter(
-      .data$finite_value &
-        (!.data$has_regulatory_value | .data$regulatory_value)
+      .data$selected_parameter_value &
+        (!.data$has_qa_preferred_value | .data$regulatory_qa %in% TRUE)
     ) |>
     dplyr::group_by(dplyr::across(dplyr::all_of(keys))) |>
     dplyr::summarise(
@@ -223,16 +251,32 @@ tceq_build_hourly_composite <- function(raw) {
       composite_max_ug_m3 = max(.data$pm25_ug_m3),
       composite_spread_ug_m3 = .data$composite_max_ug_m3 - .data$composite_min_ug_m3,
       contributor_pocs = tceq_collapse_values(.data$poc),
+      contributor_parameter_codes = tceq_collapse_values(.data$parameter_code),
       contributor_sources = tceq_collapse_values(.data$raw_series_key),
+      has_qa_preferred_value = any(.data$has_qa_preferred_value),
+      has_explicit_nonqa_value = any(.data$has_explicit_nonqa_value),
       .groups = "drop"
     )
   status |>
     dplyr::left_join(selected, by = keys) |>
     dplyr::mutate(
-      qa_fallback = .data$available_records > 0L & !.data$has_regulatory_value,
+      parameter_fallback = .data$available_records > 0L &
+        .data$selected_parameter_code == "88502",
+      qa_fallback = .data$available_records > 0L &
+        !dplyr::coalesce(.data$has_qa_preferred_value, FALSE) &
+        dplyr::coalesce(.data$has_explicit_nonqa_value, FALSE),
+      qa_status_unavailable = .data$available_records > 0L &
+        !dplyr::coalesce(.data$has_qa_preferred_value, FALSE) &
+        !dplyr::coalesce(.data$has_explicit_nonqa_value, FALSE),
       composite_selection = dplyr::case_when(
-        .data$has_regulatory_value ~ "regulatory_qa",
-        .data$available_records > 0L ~ "qa_fallback",
+        .data$selected_parameter_code == "88101" &
+          dplyr::coalesce(.data$has_qa_preferred_value, FALSE) ~ "88101_qa_preferred",
+        .data$selected_parameter_code == "88101" & .data$qa_fallback ~ "88101_qa_fallback",
+        .data$selected_parameter_code == "88101" ~ "88101_qa_status_unavailable",
+        .data$selected_parameter_code == "88502" &
+          dplyr::coalesce(.data$has_qa_preferred_value, FALSE) ~ "88502_parameter_fallback_qa_preferred",
+        .data$selected_parameter_code == "88502" & .data$qa_fallback ~ "88502_parameter_and_qa_fallback",
+        .data$selected_parameter_code == "88502" ~ "88502_parameter_fallback",
         TRUE ~ "missing"
       ),
       datetime_lstd = tceq_lstd_datetime(.data$date, .data$hour)
@@ -245,12 +289,12 @@ tceq_build_daily_summary <- function(hourly, raw, minimum_valid_hours = 18L) {
   tceq_assert_columns(
     hourly,
     c("aqs_site_id", "date", "composite_pm25_ug_m3", "qa_fallback",
-      "contributing_records"),
+      "parameter_fallback", "contributing_records"),
     "Hourly composite"
   )
   tceq_assert_columns(
     raw,
-    c("date", "source_file", "report_block", "poc", "daily_max_ug_m3",
+    c("date", "parameter_code", "source_file", "report_block", "poc", "daily_max_ug_m3",
       "daily_avg_ug_m3", "daily_std_ug_m3", "daily_max_flag", "daily_avg_flag",
       "daily_std_flag"),
     "Imported hourly TCEQ data"
@@ -266,19 +310,30 @@ tceq_build_daily_summary <- function(hourly, raw, minimum_valid_hours = 18L) {
         stats::sd(.data$composite_pm25_ug_m3, na.rm = TRUE)
       } else NA_real_,
       qa_fallback_hours = sum(.data$qa_fallback & is.finite(.data$composite_pm25_ug_m3)),
+      parameter_fallback_hours = sum(
+        .data$parameter_fallback & is.finite(.data$composite_pm25_ug_m3)
+      ),
       contributing_records = sum(.data$contributing_records, na.rm = TRUE),
       .groups = "drop"
     ) |>
     dplyr::mutate(event_eligible = .data$valid_hours >= minimum_valid_hours)
   reported <- raw |>
     dplyr::distinct(
-      .data$aqs_site_id, .data$date, .data$source_file, .data$report_block, .data$poc,
+      .data$aqs_site_id, .data$date, .data$parameter_code,
+      .data$source_file, .data$report_block, .data$poc,
       .data$daily_max_ug_m3, .data$daily_avg_ug_m3, .data$daily_std_ug_m3,
       .data$daily_max_flag, .data$daily_avg_flag, .data$daily_std_flag
     ) |>
     dplyr::group_by(.data$aqs_site_id, .data$date) |>
+    dplyr::mutate(
+      selected_reported_parameter = ifelse(
+        any(.data$parameter_code == "88101"), "88101", "88502"
+      )
+    ) |>
+    dplyr::filter(.data$parameter_code == .data$selected_reported_parameter) |>
     dplyr::summarise(
       reported_daily_records = dplyr::n(),
+      reported_parameter_codes = tceq_collapse_values(.data$parameter_code),
       reported_daily_max_median_ug_m3 = tceq_safe_median(.data$daily_max_ug_m3),
       reported_daily_max_min_ug_m3 = tceq_safe_min(.data$daily_max_ug_m3),
       reported_daily_max_max_ug_m3 = tceq_safe_max(.data$daily_max_ug_m3),
@@ -312,6 +367,7 @@ tceq_empty_events <- function() {
     peak_hourly_ug_m3 = double(), mean_hourly_ug_m3 = double(),
     peak_daily_max_ug_m3 = double(), max_daily_avg_ug_m3 = double(),
     valid_hours = integer(), contributing_records = integer(), qa_fallback = logical(),
+    parameter_fallback = logical(),
     core_dates = character(), trough_dates = character(), coverage_warning = logical(),
     definition = character()
   )
@@ -349,6 +405,7 @@ tceq_detect_short_spikes <- function(hourly, threshold = 35, maximum_hours = 5L)
       valid_hours = dplyr::n(),
       contributing_records = sum(.data$contributing_records, na.rm = TRUE),
       qa_fallback = any(.data$qa_fallback),
+      parameter_fallback = any(.data$parameter_fallback),
       .groups = "drop"
     ) |>
     dplyr::filter(.data$duration_hours <= maximum_hours) |>
@@ -421,6 +478,9 @@ tceq_detect_multiday_events <- function(
         valid_hours = as.integer(sum(days$valid_hours, na.rm = TRUE)),
         contributing_records = as.integer(sum(h$contributing_records, na.rm = TRUE)),
         qa_fallback = any(h$qa_fallback & is.finite(h$composite_pm25_ug_m3)),
+        parameter_fallback = any(
+          h$parameter_fallback & is.finite(h$composite_pm25_ug_m3)
+        ),
         core_dates = paste(days$date[days$core_day], collapse = "|"),
         trough_dates = paste(days$date[days$trough_day], collapse = "|"),
         coverage_warning = any(days$valid_hours < 24L)
@@ -472,6 +532,7 @@ tceq_complete_heatmap <- function(hourly, start_date, end_date, maximum_days = 9
         dplyr::select(dplyr::all_of(c(
           "date", "hour", "composite_pm25_ug_m3", "value_flag_summary",
           "contributing_records", "available_records", "qa_fallback",
+          "parameter_fallback", "selected_parameter_code", "qa_status_unavailable",
           "composite_selection"
         ))),
       by = c("date", "hour")
@@ -480,6 +541,8 @@ tceq_complete_heatmap <- function(hourly, start_date, end_date, maximum_days = 9
       hour_lstd = sprintf("%02d:00", .data$hour),
       composite_selection = dplyr::coalesce(.data$composite_selection, "missing"),
       qa_fallback = dplyr::coalesce(.data$qa_fallback, FALSE),
+      parameter_fallback = dplyr::coalesce(.data$parameter_fallback, FALSE),
+      qa_status_unavailable = dplyr::coalesce(.data$qa_status_unavailable, FALSE),
       value_flag_summary = dplyr::coalesce(.data$value_flag_summary, "")
     )
 }

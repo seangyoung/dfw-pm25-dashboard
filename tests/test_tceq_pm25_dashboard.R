@@ -31,6 +31,7 @@ raw_composite_test <- tibble::tibble(
   poc = c(2L, 2L, 3L, 2L, 3L, 2L),
   source_file = "test.csv",
   report_block = c(1L, 2L, 3L, 1L, 2L, 1L),
+  parameter_code = "88101",
   regulatory_qa = c(TRUE, TRUE, FALSE, FALSE, FALSE, FALSE)
 )
 composite_test <- tceq_build_hourly_composite(raw_composite_test)
@@ -42,6 +43,36 @@ stopifnot(
   composite_test$qa_fallback[composite_test$hour == 1L],
   is.na(composite_test$composite_pm25_ug_m3[composite_test$hour == 2L]),
   composite_test$value_flag_summary[composite_test$hour == 2L] == "NEG"
+)
+
+# Parameter 88101 is the primary site-hour measurement. Parameter 88502 is used
+# only when the primary parameter has no finite value for that site-hour.
+parameter_fallback_test <- raw_composite_test[0, ] |>
+  dplyr::bind_rows(tibble::tibble(
+    aqs_site_id = "48_439_1053",
+    site_name = "California Parkway North",
+    date = as.Date("2024-01-02"),
+    hour = c(0L, 0L, 1L),
+    hour_lstd = c("00:00", "00:00", "01:00"),
+    pm25_raw = c("10", "100", "20"),
+    pm25_ug_m3 = c(10, 100, 20),
+    value_flag = NA_character_,
+    poc = c(1L, 3L, 3L),
+    source_file = c("primary.csv", "acceptable.csv", "acceptable.csv"),
+    report_block = 1L,
+    parameter_code = c("88101", "88502", "88502"),
+    regulatory_qa = c(TRUE, NA, NA)
+  ))
+parameter_composite <- tceq_build_hourly_composite(parameter_fallback_test)
+stopifnot(
+  parameter_composite$composite_pm25_ug_m3[parameter_composite$hour == 0L] == 10,
+  parameter_composite$selected_parameter_code[parameter_composite$hour == 0L] == "88101",
+  !parameter_composite$parameter_fallback[parameter_composite$hour == 0L],
+  parameter_composite$composite_pm25_ug_m3[parameter_composite$hour == 1L] == 20,
+  parameter_composite$selected_parameter_code[parameter_composite$hour == 1L] == "88502",
+  parameter_composite$parameter_fallback[parameter_composite$hour == 1L],
+  parameter_composite$qa_status_unavailable[parameter_composite$hour == 1L],
+  !parameter_composite$qa_fallback[parameter_composite$hour == 1L]
 )
 
 make_hourly_test <- function(values, start = "2024-01-01 00:00:00") {
@@ -56,6 +87,8 @@ make_hourly_test <- function(values, start = "2024-01-01 00:00:00") {
     composite_pm25_ug_m3 = values,
     contributing_records = ifelse(is.finite(values), 1L, 0L),
     qa_fallback = FALSE,
+    parameter_fallback = FALSE,
+    qa_status_unavailable = FALSE,
     total_records = 1L,
     available_records = ifelse(is.finite(values), 1L, 0L),
     has_regulatory_value = is.finite(values),
@@ -65,7 +98,8 @@ make_hourly_test <- function(values, start = "2024-01-01 00:00:00") {
     composite_spread_ug_m3 = 0,
     contributor_pocs = "1",
     contributor_sources = "test.csv::1::1",
-    composite_selection = ifelse(is.finite(values), "regulatory_qa", "missing")
+    selected_parameter_code = ifelse(is.finite(values), "88101", NA_character_),
+    composite_selection = ifelse(is.finite(values), "88101_qa_preferred", "missing")
   )
 }
 
@@ -91,7 +125,8 @@ make_daily_test <- function(maximum, average, valid = rep(24L, length(maximum)),
     aqs_site_id = "test_site", date = dates, valid_hours = valid,
     represented_hours = 24L, computed_daily_max_ug_m3 = maximum,
     computed_daily_avg_ug_m3 = average, computed_daily_std_ug_m3 = 1,
-    qa_fallback_hours = 0L, contributing_records = valid,
+    qa_fallback_hours = 0L, parameter_fallback_hours = 0L,
+    contributing_records = valid,
     event_eligible = valid >= 18L
   )
   hourly <- purrr::map2_dfr(dates, average, function(date, value) {
@@ -223,6 +258,7 @@ make_server_bundle <- function(site_id, hourly) {
       pm25_raw = as.character(.data$composite_pm25_ug_m3), value_flag = NA_character_,
       source_file = "cams_0001_2024-01_pm25.csv", report_block = 1L, poc = 1L,
       regulatory_qa = TRUE,
+      parameter_code = "88101", parameter_name = "PM-2.5 (Local Conditions)",
       raw_series_key = tceq_raw_series_key(.data$source_file, .data$report_block, .data$poc)
     )
   list(

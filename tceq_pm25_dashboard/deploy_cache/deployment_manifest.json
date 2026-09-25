@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-09-11 20:26:13 UTC",
-  "station_count": 16,
+  "generated_at_utc": "2026-09-25 16:43:10 UTC",
+  "station_count": 17,
   "first_date": "2000-01-01",
   "last_date": "2026-08-31",
-  "source_cache_manifest_sha256": "cb81b5b4a8992a6650b2e689e165ad80fff8259e1d9007ee40179fa32c44356c",
-  "raw_manifest_sha256": "5f1549d0a1050c7b0ee2b26ce1cd431c0e91ee14530b97439ee6637be1b9ebc2",
+  "source_cache_manifest_sha256": "d8ebc26414861edc42e3b99a9172a2bfd0031c1b7066e62035d8bdac2546bec1",
+  "raw_manifest_sha256": "80ed1d35460d1798e1d3416cb194ea82ba52d263caf9e203fa3c2ec910405dc8",
   "data_classification": "Public TCEQ ambient-air monitoring data",
-  "files": ["station_index.rds", "event_index.rds", "cache_manifest.json", "download_manifest.csv", "sites/48_439_3011.rds", "sites/48_113_0050.rds", "sites/48_349_1051.rds", "sites/48_113_1096.rds", "sites/48_121_0034.rds", "sites/48_439_1053.rds", "sites/48_439_1002.rds", "sites/48_439_3009.rds", "sites/48_439_1006.rds", "sites/48_257_0005.rds", "sites/48_113_0069.rds", "sites/48_439_3008.rds", "sites/48_139_0016.rds", "sites/48_139_0015.rds", "sites/48_139_0017.rds", "sites/48_113_3003.rds"]
+  "files": ["station_index.rds", "event_index.rds", "cache_manifest.json", "download_manifest.csv", "sites/48_439_3011.rds", "sites/48_113_0050.rds", "sites/48_349_1051.rds", "sites/48_113_1096.rds", "sites/48_121_0034.rds", "sites/48_439_1053.rds", "sites/48_439_1002.rds", "sites/48_439_3009.rds", "sites/48_439_1006.rds", "sites/48_139_1044.rds", "sites/48_257_0005.rds", "sites/48_113_0069.rds", "sites/48_439_3008.rds", "sites/48_139_0016.rds", "sites/48_139_0015.rds", "sites/48_139_0017.rds", "sites/48_113_3003.rds"]
 }
