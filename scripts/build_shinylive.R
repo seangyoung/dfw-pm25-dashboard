@@ -10,6 +10,7 @@ if (length(script_arg)) {
 
 source(file.path(root, "R", "utils.R"))
 source(file.path(root, "R", "tceq_pm25_dashboard.R"))
+source(file.path(root, "R", "dallas_aqmesh.R"))
 
 main <- function() {
   args <- commandArgs(trailingOnly = TRUE)
@@ -66,7 +67,7 @@ main <- function() {
   on.exit(unlink(stage, recursive = TRUE), add = TRUE)
   for (path in c(
       "R", "config", "scripts", "www",
-      file.path("data", "derived", "tceq_dfw_pm25_dashboard", "sites")
+      file.path("data", "derived", "dfw_pm25_dashboard", "sites")
     )) {
     dir.create(file.path(stage, path), recursive = TRUE, showWarnings = FALSE)
   }
@@ -84,7 +85,10 @@ main <- function() {
     file.path(root, "tceq_pm25_dashboard", "www", "styles.css"),
     file.path(stage, "www", "styles.css")
   )
-  for (name in c("utils.R", "tceq_pm25_dashboard.R", "tceq_pm25_dashboard_app.R")) {
+  for (name in c(
+      "utils.R", "tceq_pm25_dashboard.R", "dallas_aqmesh.R",
+      "tceq_pm25_dashboard_app.R"
+    )) {
     copy_checked(file.path(root, "R", name), file.path(stage, "R", name))
   }
   copy_checked(
@@ -96,7 +100,7 @@ main <- function() {
     file.path(stage, "scripts", "deployment_marker.txt")
   )
 
-  cache_stage <- file.path(stage, "data", "derived", "tceq_dfw_pm25_dashboard")
+  cache_stage <- file.path(stage, "data", "derived", "dfw_pm25_dashboard")
   for (name in c("station_index.rds", "event_index.rds", "cache_manifest.json")) {
     copy_checked(file.path(cache_dir, name), file.path(cache_stage, name))
   }

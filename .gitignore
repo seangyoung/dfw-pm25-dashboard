@@ -6,4 +6,6 @@ renv/library/
 renv/staging/
 _site/
 /data/raw/
+/data/interim/
 /data/derived/
+/config/local.yml

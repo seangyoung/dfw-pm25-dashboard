@@ -1,0 +1,3 @@
+# Optional: keep the full raw and prepared archives outside the repository.
+# Copy this file to config/local.yml and change the path for your computer.
+data_root: /absolute/path/to/dfw_pm25_data

@@ -195,18 +195,18 @@ app_server_source <- readLines(
 stopifnot(
   any(grepl("World_Light_Gray_Base", app_server_source, fixed = TRUE)),
   any(grepl("World_Light_Gray_Reference", app_server_source, fixed = TRUE)),
-  !any(grepl("CartoDB.Positron", app_server_source, fixed = TRUE)),
-  file.exists(file.path(find_repo_root(), "deployment", "startup.css")),
-  file.exists(file.path(find_repo_root(), "deployment", "startup.js"))
+  !any(grepl("CartoDB.Positron", app_server_source, fixed = TRUE))
 )
-build_source <- readLines(
-  file.path(find_repo_root(), "scripts", "build_shinylive.R"),
-  warn = FALSE
-)
-stopifnot(
-  any(grepl('fetch("./app.json?v=%s")', build_source, fixed = TRUE)),
-  any(grepl("versioned_assets", build_source, fixed = TRUE))
-)
+public_build_script <- file.path(find_repo_root(), "scripts", "build_shinylive.R")
+if (file.exists(public_build_script)) {
+  build_source <- readLines(public_build_script, warn = FALSE)
+  stopifnot(
+    file.exists(file.path(find_repo_root(), "deployment", "startup.css")),
+    file.exists(file.path(find_repo_root(), "deployment", "startup.js")),
+    any(grepl('fetch("./app.json?v=%s")', build_source, fixed = TRUE)),
+    any(grepl("versioned_assets", build_source, fixed = TRUE))
+  )
+}
 
 # Server-level checks use compact in-memory site bundles; no external cache or
 # live TCEQ request is required by the project test suite.
@@ -275,7 +275,11 @@ server_stations <- tibble::tibble(
   active = c(TRUE, TRUE), last_date = as.Date(c("2024-01-02", "2024-01-02")),
   first_date = as.Date(c("2024-01-01", "2024-01-01")),
   cams_id = c(1L, 2L), city = "Test", county = "Test",
-  latitude = c(32.7, 32.8), longitude = c(-97.3, -97.2)
+  latitude = c(32.7, 32.8), longitude = c(-97.3, -97.2),
+  data_source = c("TCEQ", "Dallas AQMesh"),
+  network_label = c("TCEQ", "City of Dallas AQMesh"),
+  source_station_id = c("site_a", "Dallas location 1"),
+  time_label = c("LST", "local time")
 )
 server_events <- dplyr::bind_rows(
   server_bundles$site_a$events, server_bundles$site_b$events
@@ -287,6 +291,12 @@ shiny::testServer(
   ),
   {
     stopifnot(selected_site() == "site_a")
+    session$setInputs(data_source = "Dallas AQMesh")
+    session$flushReact()
+    stopifnot(selected_site() == "site_b", nrow(available_stations()) == 1L)
+    session$setInputs(data_source = "Combined")
+    session$flushReact()
+    stopifnot(nrow(available_stations()) == 2L)
     session$setInputs(site = "site_b")
     session$flushReact()
     stopifnot(selected_site() == "site_b", nrow(filtered_hourly()) == 48L)

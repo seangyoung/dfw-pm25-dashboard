@@ -1,11 +1,14 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-09-25 16:43:10 UTC",
-  "station_count": 17,
+  "generated_at_utc": "2026-09-28 18:56:59 UTC",
+  "station_count": 49,
   "first_date": "2000-01-01",
-  "last_date": "2026-08-31",
-  "source_cache_manifest_sha256": "d8ebc26414861edc42e3b99a9172a2bfd0031c1b7066e62035d8bdac2546bec1",
-  "raw_manifest_sha256": "80ed1d35460d1798e1d3416cb194ea82ba52d263caf9e203fa3c2ec910405dc8",
-  "data_classification": "Public TCEQ ambient-air monitoring data",
-  "files": ["station_index.rds", "event_index.rds", "cache_manifest.json", "download_manifest.csv", "sites/48_439_3011.rds", "sites/48_113_0050.rds", "sites/48_349_1051.rds", "sites/48_113_1096.rds", "sites/48_121_0034.rds", "sites/48_439_1053.rds", "sites/48_439_1002.rds", "sites/48_439_3009.rds", "sites/48_439_1006.rds", "sites/48_139_1044.rds", "sites/48_257_0005.rds", "sites/48_113_0069.rds", "sites/48_439_3008.rds", "sites/48_139_0016.rds", "sites/48_139_0015.rds", "sites/48_139_0017.rds", "sites/48_113_3003.rds"]
+  "last_date": "2026-09-28",
+  "source_cache_manifest_sha256": "fb95ef2156f25d00a83a7fdac581d9969e8b90554685e38df6513bbc57a1742e",
+  "source_manifest_sha256": {
+    "tceq_download_manifest": "80ed1d35460d1798e1d3416cb194ea82ba52d263caf9e203fa3c2ec910405dc8",
+    "dallas_aqmesh_download_manifest": "19290702220f784f8223dbcec8b39af1b79ddc16bdaff1ce090850086a484397"
+  },
+  "data_classification": "Public TCEQ ambient-air monitoring data and public City of Dallas AQMesh community-sensor data",
+  "files": ["station_index.rds", "event_index.rds", "cache_manifest.json", "tceq_download_manifest.csv", "dallas_aqmesh_download_manifest.csv", "sites/DAL_AQMESH_COLE_PARK.rds", "sites/DAL_AQMESH_CRAWFORD_MEMORIAL_PARK.rds", "sites/DAL_AQMESH_FISH_TRAP_LAKE_PARK.rds", "sites/DAL_AQMESH_FLAGPOLE_HILL_PARK.rds", "sites/DAL_AQMESH_FRETZ_PARK.rds", "sites/DAL_AQMESH_FRIENDSHIP_PARK.rds", "sites/DAL_AQMESH_LARRY_JOHNSON_RECREATION_CENTER.rds", "sites/DAL_AQMESH_MARTIN_WEISS_PARK.rds", "sites/DAL_AQMESH_MARTIN_WEISS_PARK_II.rds", "sites/DAL_AQMESH_MILL_CREEK_BATCH_PLANT.rds", "sites/DAL_AQMESH_MONEYGRAM_PARK.rds", "sites/DAL_AQMESH_MOUNTAIN_CREEK_LIBRARY.rds", "sites/DAL_AQMESH_PARK_FOREST_LIBRARY.rds", "sites/DAL_AQMESH_SAMUEL_GARLAND_PARK.rds", "sites/DAL_AQMESH_WEST_DALLAS_MULTIPURPOSE_CENTER.rds", "sites/DAL_AQMESH_WESTHAVEN_PARK.rds", "sites/DAL_AQMESH_ARCADIA_PARK.rds", "sites/DAL_AQMESH_CAMBELL_GREEN_PARK.rds", "sites/DAL_AQMESH_DALLAS_ZOO.rds", "sites/DAL_AQMESH_EMMA_CARTER_PARK.rds", "sites/DAL_AQMESH_FIFA_FAN_ZONE.rds", "sites/DAL_AQMESH_FLORAL_FARM_I.rds", "sites/DAL_AQMESH_FLORAL_FARM_II.rds", "sites/DAL_AQMESH_HOLCOMB_PARK.rds", "sites/DAL_AQMESH_JAYCEE_ZARAGOZA_PARK.rds", "sites/DAL_AQMESH_JOPPY_MOMMA_S_FARM.rds", "sites/DAL_AQMESH_LUNA_VISTA_GOLF_COURSE.rds", "sites/DAL_AQMESH_MYERS_PROSPERITY_PARK.rds", "sites/DAL_AQMESH_POLK_RECREATION_CENTER.rds", "sites/DAL_AQMESH_SOUTH_CENTRAL_PARK.rds", "sites/DAL_AQMESH_TOMMIE_ALLEN_RECREATION.rds", "sites/DAL_AQMESH_WILLIS_WINTERS_PARK.rds", "sites/48_439_3011.rds", "sites/48_113_0050.rds", "sites/48_349_1051.rds", "sites/48_113_1096.rds", "sites/48_121_0034.rds", "sites/48_439_1053.rds", "sites/48_439_1002.rds", "sites/48_439_3009.rds", "sites/48_439_1006.rds", "sites/48_139_1044.rds", "sites/48_257_0005.rds", "sites/48_113_0069.rds", "sites/48_439_3008.rds", "sites/48_139_0016.rds", "sites/48_139_0015.rds", "sites/48_139_0017.rds", "sites/48_113_3003.rds"]
 }

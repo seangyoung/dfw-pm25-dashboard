@@ -12,6 +12,16 @@ tceq_dashboard_default_site <- function(station_index) {
   as.character(candidates$aqs_site_id[1])
 }
 
+tceq_dashboard_site_choices <- function(station_index) {
+  stats::setNames(
+    station_index$aqs_site_id,
+    paste0(
+      station_index$site_name, " · ", station_index$data_source,
+      ifelse(station_index$active, "", " · historical")
+    )
+  )
+}
+
 tceq_dashboard_default_dates <- function(bundle, days = 30L) {
   bounds <- tceq_dashboard_date_bounds(bundle)
   tceq_dashboard_window_dates(bounds[1], bounds[2], days, bounds[2])
@@ -76,6 +86,7 @@ tceq_dashboard_event_table <- function(events) {
       `QA note` = character()
     ))
   }
+  if (!"data_source" %in% names(events)) events$data_source <- NA_character_
   events |>
     dplyr::transmute(
       Event = .data$event_id,
@@ -85,12 +96,12 @@ tceq_dashboard_event_table <- function(events) {
       ),
       Start = ifelse(
         .data$event_type == "short_spike",
-        format(.data$start_lstd, "%Y-%m-%d %H:00 LST", tz = "UTC"),
+        format(.data$start_lstd, "%Y-%m-%d %H:00 local", tz = "UTC"),
         as.character(.data$start_date)
       ),
       End = ifelse(
         .data$event_type == "short_spike",
-        format(.data$end_lstd, "%Y-%m-%d %H:00 LST", tz = "UTC"),
+        format(.data$end_lstd, "%Y-%m-%d %H:00 local", tz = "UTC"),
         as.character(.data$end_date)
       ),
       `Hours / days` = ifelse(
@@ -101,6 +112,8 @@ tceq_dashboard_event_table <- function(events) {
       `Peak daily max` = round(.data$peak_daily_max_ug_m3, 1),
       `Highest daily avg` = round(.data$max_daily_avg_ug_m3, 1),
       `QA note` = dplyr::case_when(
+        .data$data_source == "Dallas AQMesh" ~
+          "Non-regulatory Dallas AQMesh screening data",
         .data$parameter_fallback & .data$qa_fallback ~ "Includes 88502 parameter fallback and QA-fallback values",
         .data$parameter_fallback ~ "Includes 88502 parameter-fallback values",
         .data$qa_fallback ~ "Includes QA-fallback values",
@@ -112,6 +125,30 @@ tceq_dashboard_event_table <- function(events) {
 
 tceq_dashboard_raw_choices <- function(raw) {
   if (!nrow(raw)) return(character())
+  if ("data_source" %in% names(raw) &&
+      any(raw$data_source == "Dallas AQMesh", na.rm = TRUE)) {
+    choices <- raw |>
+      dplyr::group_by(.data$raw_series_key, .data$pod_serial_number) |>
+      dplyr::summarise(
+        particleprotocol_version = tceq_collapse_values(
+          .data$particleprotocol_version
+        ),
+        reading_status_normalized = tceq_collapse_values(
+          .data$reading_status_normalized
+        ),
+        .groups = "drop"
+      ) |>
+      dplyr::arrange(.data$pod_serial_number) |>
+      dplyr::mutate(
+        label = sprintf(
+          "AQMesh pod %s · particle protocol %s · status %s",
+          .data$pod_serial_number,
+          dplyr::coalesce(as.character(.data$particleprotocol_version), "not reported"),
+          dplyr::coalesce(.data$reading_status_normalized, "not reported")
+        )
+      )
+    return(stats::setNames(choices$raw_series_key, choices$label))
+  }
   choices <- raw |>
     dplyr::distinct(
       .data$raw_series_key, .data$source_file, .data$report_block, .data$poc,
@@ -146,19 +183,28 @@ tceq_dashboard_yearly_quality <- function(bundle) {
     year_end <- min(last_date, as.Date(sprintf("%d-12-31", year)))
     expected <- (as.integer(year_end - year_start) + 1L) * 24L
     x <- hourly[hourly$date >= year_start & hourly$date <= year_end, , drop = FALSE]
-    primary <- sum(
-      is.finite(x$composite_pm25_ug_m3) &
-        x$selected_parameter_code == "88101", na.rm = TRUE
-    )
-    acceptable <- sum(
+    is_aqmesh <- !is.null(bundle$metadata) &&
+      "data_source" %in% names(bundle$metadata) &&
+      identical(as.character(bundle$metadata$data_source[1]), "Dallas AQMesh")
+    primary <- if (is_aqmesh) {
+      sum(is.finite(x$composite_pm25_ug_m3), na.rm = TRUE)
+    } else {
+      sum(
+        is.finite(x$composite_pm25_ug_m3) &
+          x$selected_parameter_code == "88101", na.rm = TRUE
+      )
+    }
+    acceptable <- if (is_aqmesh) 0L else sum(
       is.finite(x$composite_pm25_ug_m3) &
         x$selected_parameter_code == "88502", na.rm = TRUE
     )
     tibble::tibble(
-      year = year, expected_hours = expected, primary_88101_hours = primary,
-      fallback_88502_hours = acceptable,
+      year = year, expected_hours = expected, preferred_hours = primary,
+      fallback_hours = acceptable,
       missing_hours = max(0L, expected - primary - acceptable),
-      valid_percent = 100 * (primary + acceptable) / expected
+      valid_percent = 100 * (primary + acceptable) / expected,
+      preferred_label = if (is_aqmesh) "Valid AQMesh scaled PM2.5" else "Parameter 88101",
+      fallback_label = if (is_aqmesh) "Other valid values" else "Parameter 88502 fallback"
     )
   })
 }
@@ -166,6 +212,20 @@ tceq_dashboard_yearly_quality <- function(bundle) {
 tceq_dashboard_server <- function(
     station_index, event_index, load_bundle, cache_manifest = list(),
     cache_stale = FALSE) {
+  if (!"data_source" %in% names(station_index)) {
+    station_index$data_source <- "TCEQ"
+    station_index$network_label <- "Texas Commission on Environmental Quality"
+    station_index$source_station_id <- station_index$aqs_site_id
+    station_index$time_label <- "LST"
+  }
+  if (!"data_source" %in% names(event_index)) {
+    event_index <- dplyr::left_join(
+      event_index,
+      station_index |>
+        dplyr::distinct(.data$aqs_site_id, .data$data_source),
+      by = "aqs_site_id"
+    )
+  }
   force(station_index)
   force(event_index)
   force(load_bundle)
@@ -179,6 +239,14 @@ tceq_dashboard_server <- function(
       pending_date_range = NULL
     )
 
+    available_stations <- shiny::reactive({
+      requested <- input$data_source
+      if (is.null(requested) || identical(requested, "Combined")) {
+        station_index
+      } else {
+        station_index[station_index$data_source == requested, , drop = FALSE]
+      }
+    })
     selected_site <- shiny::reactive(rv$site)
     site_record <- shiny::reactive({
       station_index[station_index$aqs_site_id == selected_site(), , drop = FALSE]
@@ -212,8 +280,23 @@ tceq_dashboard_server <- function(
       invisible(dates)
     }
 
+    shiny::observeEvent(input$data_source, {
+      stations <- available_stations()
+      shiny::req(nrow(stations) > 0L)
+      selected <- rv$site
+      if (!selected %in% stations$aqs_site_id) {
+        remember_current_window()
+        selected <- tceq_dashboard_default_site(stations)
+        rv$site <- selected
+      }
+      shiny::updateSelectInput(
+        session, "site", choices = tceq_dashboard_site_choices(stations),
+        selected = selected
+      )
+    }, ignoreInit = FALSE)
+
     shiny::observeEvent(input$site, {
-      if (!is.null(input$site) && input$site %in% station_index$aqs_site_id) {
+      if (!is.null(input$site) && input$site %in% available_stations()$aqs_site_id) {
         if (!identical(input$site, rv$site)) remember_current_window()
         rv$site <- input$site
       }
@@ -221,7 +304,7 @@ tceq_dashboard_server <- function(
 
     shiny::observeEvent(input$site_map_marker_click, {
       clicked <- input$site_map_marker_click$id
-      if (!is.null(clicked) && clicked %in% station_index$aqs_site_id) {
+      if (!is.null(clicked) && clicked %in% available_stations()$aqs_site_id) {
         if (!identical(clicked, rv$site)) remember_current_window()
         rv$site <- clicked
         shiny::updateSelectInput(session, "site", selected = clicked)
@@ -378,7 +461,7 @@ tceq_dashboard_server <- function(
         return(shiny::div(
           class = "cache-alert",
           shiny::strong("The dashboard cache is older than the raw download manifest."),
-          shiny::div("Run: Rscript --vanilla scripts/08c_prepare_tceq_dfw_pm25_dashboard.R")
+          shiny::div("Run: Rscript --vanilla scripts/08h_prepare_combined_pm25_dashboard.R")
         ))
       }
       generated <- cache_manifest$generated_at_utc
@@ -388,17 +471,24 @@ tceq_dashboard_server <- function(
 
     output$site_map <- leaflet::renderLeaflet({
       selected <- selected_site()
-      locations <- station_index
+      locations <- available_stations()
+      network_colors <- ifelse(
+        locations$data_source == "TCEQ", "#16697A", "#7C3AED"
+      )
       marker_colors <- ifelse(
-        locations$aqs_site_id == selected, "#D97706",
-        ifelse(locations$active, "#16697A", "#6B7280")
+        locations$aqs_site_id == selected, "#D97706", network_colors
       )
       marker_radius <- ifelse(locations$aqs_site_id == selected, 10, 7)
+      identity_line <- ifelse(
+        locations$data_source == "TCEQ",
+        paste0("AQS ", locations$aqs_site_id, " · CAMS ", locations$cams_id),
+        as.character(locations$source_station_id)
+      )
       popup <- sprintf(
-        "<strong>%s</strong><br>AQS %s<br>CAMS %s<br>%s<br>%s to %s",
+        "<strong>%s</strong><br>%s<br>%s<br>%s<br>%s to %s",
         htmltools::htmlEscape(locations$site_name),
-        htmltools::htmlEscape(locations$aqs_site_id),
-        locations$cams_id,
+        htmltools::htmlEscape(locations$data_source),
+        htmltools::htmlEscape(identity_line),
         htmltools::htmlEscape(ifelse(locations$active, "Active", "Historical")),
         locations$first_date, locations$last_date
       )
@@ -425,24 +515,37 @@ tceq_dashboard_server <- function(
         leaflet::addCircleMarkers(
           lng = ~longitude, lat = ~latitude, layerId = ~aqs_site_id,
           radius = marker_radius, color = marker_colors, weight = 2,
-          fillColor = marker_colors, fillOpacity = 0.85,
+          fillColor = marker_colors,
+          fillOpacity = ifelse(locations$active, 0.88, 0.42),
           popup = popup, label = ~site_name
         ) |>
         leaflet::addLegend(
-          position = "bottomright", colors = c("#16697A", "#6B7280"),
-          labels = c("Active", "Historical"), opacity = 0.9,
-          title = "Site status"
+          position = "bottomright",
+          colors = c("#16697A", "#7C3AED", "#D97706"),
+          labels = c("TCEQ", "Dallas AQMesh", "Selected"), opacity = 0.9,
+          title = "Monitoring network"
         ) |>
         leaflet::setView(focus$longitude[1], focus$latitude[1], zoom = 9)
     })
 
     output$site_details <- shiny::renderUI({
       x <- site_record()
+      identity <- if (x$data_source == "TCEQ") {
+        paste("AQS", x$aqs_site_id, "· CAMS", x$cams_id)
+      } else {
+        pod <- if ("pod_serial_number" %in% names(x)) {
+          as.character(x$pod_serial_number)
+        } else "not reported"
+        paste(x$source_station_id, "· pod", pod)
+      }
       shiny::tagList(
         shiny::div(class = "selected-site-name", x$site_name),
-        shiny::div(class = "site-meta", paste("AQS", x$aqs_site_id, "· CAMS", x$cams_id)),
+        shiny::div(class = "site-meta", paste(x$data_source, "·", identity)),
         shiny::div(class = "site-meta", paste0(x$city, " · ", x$county, " County")),
-        shiny::div(class = "site-meta", paste(x$first_date, "to", x$last_date, "· LST"))
+        shiny::div(
+          class = "site-meta",
+          paste(x$first_date, "to", x$last_date, "·", x$time_label)
+        )
       )
     })
 
@@ -525,7 +628,7 @@ tceq_dashboard_server <- function(
           ),
           hour_label = factor(.data$hour_lstd, levels = sprintf("%02d:00", 0:23)),
           hover = sprintf(
-            "%s · %s LST<br>PM2.5: %s<br>Selection: %s<br>Contributors: %s%s",
+            "%s · %s site local time<br>PM2.5: %s<br>Selection: %s<br>Contributors: %s%s",
             .data$date, .data$hour_lstd,
             ifelse(
               is.finite(.data$composite_pm25_ug_m3),
@@ -559,7 +662,7 @@ tceq_dashboard_server <- function(
           na.value = "#D1D5DB", name = "PM2.5\n(µg/m³)"
         ) +
         ggplot2::scale_y_discrete(limits = rev) +
-        ggplot2::labs(x = "Hour (LST)", y = "Date") +
+        ggplot2::labs(x = "Hour (site local time)", y = "Date") +
         ggplot2::theme_minimal(base_size = 12) +
         ggplot2::theme(
           panel.grid = ggplot2::element_blank(),
@@ -666,7 +769,7 @@ tceq_dashboard_server <- function(
           if (event$event_type == "short_spike") {
             paste(
               format(event$start_lstd, "%Y-%m-%d %H:00", tz = "UTC"), "to",
-              format(event$end_lstd, "%Y-%m-%d %H:00 LST", tz = "UTC"),
+              format(event$end_lstd, "%Y-%m-%d %H:00 site local time", tz = "UTC"),
               "·", event$duration_hours,
               if (event$duration_hours == 1L) "hour" else "hours"
             )
@@ -677,7 +780,12 @@ tceq_dashboard_server <- function(
         if (event$parameter_fallback) {
           shiny::span(class = "qa-warning", "Includes parameter 88502 fallback values")
         },
-        if (event$qa_fallback) shiny::span(class = "qa-warning", "Includes QA-fallback values")
+        if (event$qa_fallback) shiny::span(
+          class = "qa-warning",
+          if (site_record()$data_source == "Dallas AQMesh") {
+            "Dallas AQMesh values are non-regulatory screening measurements"
+          } else "Includes QA-fallback values"
+        )
       )
     })
 
@@ -695,7 +803,7 @@ tceq_dashboard_server <- function(
         p, data = hourly, x = ~datetime_lstd, y = ~composite_pm25_ug_m3,
         name = "Site composite", line = list(color = "#16697A", width = 2.5),
         text = ~sprintf(
-          "%s LST<br>Composite: %.1f µg/m³<br>Parameter: %s<br>Contributors: %d<br>%s",
+          "%s site local time<br>Composite: %.1f µg/m³<br>Parameter: %s<br>Contributors: %d<br>%s",
           format(datetime_lstd, "%Y-%m-%d %H:00", tz = "UTC"),
           composite_pm25_ug_m3, selected_parameter_code, contributing_records,
           ifelse(
@@ -719,7 +827,7 @@ tceq_dashboard_server <- function(
             p, data = one, x = ~datetime_lstd, y = ~pm25_ug_m3,
             name = label, line = list(width = 1, dash = "dot"),
             text = ~sprintf(
-              "%s LST<br>Raw: %s<br>Parameter %s · POC %d · table %d<br>Flag: %s",
+              "%s site local time<br>Raw: %s<br>Parameter %s · POC %s · table %s<br>Flag: %s",
               format(datetime_lstd, "%Y-%m-%d %H:00", tz = "UTC"),
               ifelse(is.finite(pm25_ug_m3), sprintf("%.1f µg/m³", pm25_ug_m3), pm25_raw),
               parameter_code, poc, report_block,
@@ -774,7 +882,7 @@ tceq_dashboard_server <- function(
         })
       }
       p <- plotly::layout(
-        p, xaxis = list(title = "Date and hour (LST)"),
+        p, xaxis = list(title = "Date and hour (site local time)"),
         yaxis = list(title = "PM2.5 (µg/m³)", rangemode = "tozero"),
         legend = list(orientation = "h", x = 0, y = 1.18),
         shapes = shapes, annotations = annotations,
@@ -801,11 +909,11 @@ tceq_dashboard_server <- function(
       )
       p <- plotly::add_lines(
         p, y = ~median, name = "Median", line = list(color = "#16697A", width = 2.5),
-        text = ~sprintf("%02d:00 LST<br>Median: %.1f µg/m³<br>IQR: %.1f–%.1f", hour, median, q25, q75),
+        text = ~sprintf("%02d:00 site local time<br>Median: %.1f µg/m³<br>IQR: %.1f–%.1f", hour, median, q25, q75),
         hoverinfo = "text"
       )
       p <- plotly::layout(
-        p, xaxis = list(title = "Hour (LST)", dtick = 2),
+        p, xaxis = list(title = "Hour (site local time)", dtick = 2),
         yaxis = list(title = "PM2.5 (µg/m³)", rangemode = "tozero"),
         legend = list(orientation = "h", x = 0, y = 1.12), margin = list(t = 55)
       )
@@ -867,21 +975,21 @@ tceq_dashboard_server <- function(
     output$quality_plot <- plotly::renderPlotly({
       x <- yearly_quality() |>
         tidyr::pivot_longer(
-          c("primary_88101_hours", "fallback_88502_hours", "missing_hours"),
+          c("preferred_hours", "fallback_hours", "missing_hours"),
           names_to = "category", values_to = "hours"
         ) |>
         dplyr::mutate(
           percent = 100 * .data$hours / .data$expected_hours,
-          category = factor(
-            .data$category,
-            levels = c("primary_88101_hours", "fallback_88502_hours", "missing_hours"),
-            labels = c("Parameter 88101", "Parameter 88502 fallback", "Missing / flagged")
+          category_label = dplyr::case_when(
+            .data$category == "preferred_hours" ~ .data$preferred_label,
+            .data$category == "fallback_hours" ~ .data$fallback_label,
+            TRUE ~ "Missing / flagged"
           )
         )
       p <- plotly::plot_ly(
-        x, x = ~year, y = ~percent, color = ~category, type = "bar",
+        x, x = ~year, y = ~percent, color = ~category_label, type = "bar",
         colors = c("#16697A", "#D97706", "#9CA3AF"),
-        text = ~sprintf("%d · %s<br>%.1f%% (%s hours)", year, category, percent, format(hours, big.mark = ",")),
+        text = ~sprintf("%d · %s<br>%.1f%% (%s hours)", year, category_label, percent, format(hours, big.mark = ",")),
         hoverinfo = "text"
       )
       p <- plotly::layout(
@@ -900,6 +1008,20 @@ tceq_dashboard_server <- function(
       character_flags <- sum(!is.na(raw$value_flag) & raw$value_flag != "NEG")
       fallback <- sum(hourly$qa_fallback & finite)
       parameter_fallback <- sum(hourly$parameter_fallback & finite)
+      if (site_record()$data_source == "Dallas AQMesh") {
+        revisions <- if ("revision_count" %in% names(raw)) {
+          sum(pmax(raw$revision_count - 1L, 0L), na.rm = TRUE)
+        } else 0L
+        excluded_status <- sum(grepl("^STATUS_", raw$value_flag), na.rm = TRUE)
+        return(shiny::div(
+          class = "quality-summary",
+          shiny::span(shiny::strong(format(sum(finite), big.mark = ",")), " valid composite hours"),
+          shiny::span(shiny::strong(format(revisions, big.mark = ",")), " superseded source revisions"),
+          shiny::span(shiny::strong(format(excluded_status, big.mark = ",")), " status-excluded latest records"),
+          shiny::span(shiny::strong(format(negative, big.mark = ",")), " negative latest records"),
+          shiny::span(shiny::strong(format(character_flags, big.mark = ",")), " flagged latest records")
+        ))
+      }
       shiny::div(
         class = "quality-summary",
         shiny::span(shiny::strong(format(sum(finite), big.mark = ",")), " valid composite hours"),
@@ -917,8 +1039,8 @@ tceq_dashboard_server <- function(
       flags <- site_bundle()$raw_hourly |>
         dplyr::filter(!is.na(.data$value_flag), nzchar(.data$value_flag)) |>
         dplyr::count(.data$value_flag, name = "Raw cells", sort = TRUE) |>
-        dplyr::rename(`TCEQ flag` = "value_flag")
-      if (!nrow(flags)) flags <- data.frame(`TCEQ flag` = character(), `Raw cells` = integer())
+        dplyr::rename(`Source flag` = "value_flag")
+      if (!nrow(flags)) flags <- data.frame(`Source flag` = character(), `Raw cells` = integer())
       DT::datatable(
         flags, rownames = FALSE, options = list(pageLength = 10, dom = "tip"),
         selection = "none"
@@ -943,6 +1065,28 @@ tceq_dashboard_server <- function(
         margin = list(t = 20)
       )
       tceq_dashboard_plot_config(p)
+    })
+
+    output$source_method_note <- shiny::renderUI({
+      if (site_record()$data_source == "Dallas AQMesh") {
+        shiny::p(
+          class = "method-note",
+          paste(
+            "Dallas AQMesh uses the City's scaled PM2.5 field and the latest append-date revision for each pod-hour.",
+            "Sentinel, negative, and fault-status values remain traceable in the raw archive but are excluded from calculations.",
+            "These community-sensor values are non-regulatory, unverified screening data and are not NAAQS determinations."
+          )
+        )
+      } else {
+        shiny::p(
+          class = "method-note",
+          paste(
+            "TCEQ parameter 88101 is preferred for every site-hour; parameter 88502 is used only when 88101 is unavailable.",
+            "Negative and character-coded cells remain in the raw cache with explicit flags and are excluded from calculations.",
+            "TCEQ notes that current monitoring data are unofficial until certified."
+          )
+        )
+      }
     })
 
     output$download_hourly <- shiny::downloadHandler(

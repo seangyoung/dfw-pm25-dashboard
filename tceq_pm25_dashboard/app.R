@@ -37,6 +37,7 @@ root <- .find_tceq_project_root(source_file, getwd())
 app_dir <- file.path(root, "tceq_pm25_dashboard")
 source(file.path(root, "R", "utils.R"))
 source(file.path(root, "R", "tceq_pm25_dashboard.R"))
+source(file.path(root, "R", "dallas_aqmesh.R"))
 source(file.path(root, "R", "tceq_pm25_dashboard_app.R"))
 require_packages(c(
   "bslib", "dplyr", "DT", "ggplot2", "htmltools", "jsonlite", "leaflet",
@@ -48,29 +49,38 @@ dir.create(sass_cache_path, recursive = TRUE, showWarnings = FALSE)
 options(sass.cache = sass_cache_path)
 
 cfg <- read_config()
-configured_cache_dir <- tceq_dashboard_cache_dir(cfg)
+combined_cache_dir <- pm25_dashboard_cache_dir(cfg)
+tceq_cache_dir <- tceq_dashboard_cache_dir(cfg)
 bundled_cache_dir <- file.path(app_dir, "deploy_cache")
 cache_is_complete <- function(path) {
   all(file.exists(file.path(
     path, c("station_index.rds", "event_index.rds", "cache_manifest.json")
   )))
 }
-cache_dir <- if (cache_is_complete(configured_cache_dir)) {
-  configured_cache_dir
+cache_dir <- if (cache_is_complete(combined_cache_dir)) {
+  combined_cache_dir
+} else if (cache_is_complete(tceq_cache_dir)) {
+  tceq_cache_dir
 } else if (cache_is_complete(bundled_cache_dir)) {
   bundled_cache_dir
 } else {
-  configured_cache_dir
+  combined_cache_dir
 }
 if (!cache_is_complete(cache_dir)) {
   stop(
     "The DFW PM2.5 dashboard cache is missing. Run from the project root:\n",
-    "Rscript --vanilla scripts/08c_prepare_tceq_dfw_pm25_dashboard.R\n",
+    "Rscript --vanilla scripts/08h_prepare_combined_pm25_dashboard.R\n",
     "or restore the versioned tceq_pm25_dashboard/deploy_cache directory."
   )
 }
 
 station_index <- readRDS(file.path(cache_dir, "station_index.rds"))
+if (!"data_source" %in% names(station_index)) {
+  station_index$data_source <- "TCEQ"
+  station_index$network_label <- "Texas Commission on Environmental Quality"
+  station_index$source_station_id <- station_index$aqs_site_id
+  station_index$time_label <- "LST"
+}
 event_index <- readRDS(file.path(cache_dir, "event_index.rds"))
 cache_manifest <- jsonlite::read_json(
   file.path(cache_dir, "cache_manifest.json"), simplifyVector = TRUE
@@ -78,7 +88,12 @@ cache_manifest <- jsonlite::read_json(
 raw_manifest_path <- file.path(
   tceq_dashboard_raw_dir(root), "download_manifest.csv"
 )
-cache_stale <- tceq_cache_is_stale(cache_manifest, raw_manifest_path)
+cache_stale <- if (!is.null(cache_manifest$data_sources) &&
+                   "Dallas AQMesh" %in% cache_manifest$data_sources) {
+  pm25_combined_cache_is_stale(cache_manifest, root, cfg)
+} else {
+  tceq_cache_is_stale(cache_manifest, raw_manifest_path)
+}
 
 max_cached_sites <- suppressWarnings(as.integer(Sys.getenv(
   "TCEQ_DASHBOARD_CACHE_SITES", unset = "3"
@@ -92,7 +107,7 @@ load_bundle <- tceq_dashboard_bundle_loader(cache_dir, max_cached_sites)
 site_choices <- stats::setNames(
   station_index$aqs_site_id,
   paste0(
-    station_index$site_name, " · ", station_index$aqs_site_id,
+    station_index$site_name, " · ", station_index$data_source,
     ifelse(station_index$active, "", " · historical")
   )
 )
@@ -119,7 +134,7 @@ ui <- bslib::page_sidebar(
     class = "app-title",
     shiny::span("DFW PM2.5 Monitor Explorer"),
     shiny::tags$small(
-      "TCEQ hourly monitoring data · parameter 88101 with 88502 fallback · local standard time"
+      "TCEQ regulatory monitors and City of Dallas AQMesh community sensors"
     )
   ),
   theme = theme,
@@ -135,6 +150,14 @@ ui <- bslib::page_sidebar(
   ),
   sidebar = bslib::sidebar(
     width = 370,
+    shiny::selectInput(
+      "data_source", "Monitoring network",
+      choices = c(
+        "Combined" = "Combined", "TCEQ" = "TCEQ",
+        "Dallas AQMesh" = "Dallas AQMesh"
+      ),
+      selected = "Combined"
+    ),
     shiny::selectInput(
       "site", "Monitoring site", choices = site_choices, selected = default_site
     ),
@@ -257,7 +280,11 @@ ui <- bslib::page_sidebar(
         ),
         shiny::p(
           class = "method-note",
-          "Raw report-table identifiers are valid only within their source month and are not treated as stable instrument identities. Event labels remain composite-based."
+          paste(
+            "Raw series are diagnostic overlays only; TCEQ report-table identifiers are month-local,",
+            "while Dallas AQMesh pod identifiers and revision counts are retained explicitly.",
+            "Event labels remain composite-based."
+          )
         ),
         plotly::plotlyOutput("event_plot", height = "560px")
       )
@@ -301,17 +328,10 @@ ui <- bslib::page_sidebar(
       ),
       bslib::card(
         full_screen = TRUE,
-        bslib::card_header("Computed versus TCEQ-reported daily average"),
+        bslib::card_header("Computed versus source-reported daily average"),
         plotly::plotlyOutput("daily_difference_plot", height = "430px")
       ),
-      shiny::p(
-        class = "method-note",
-        paste(
-          "Parameter 88101 is preferred for every site-hour; acceptable parameter 88502 is used only when 88101 is unavailable.",
-          "Negative and character-coded cells remain in the raw cache with explicit flags and are excluded from numeric calculations.",
-          "TCEQ notes that current monitoring data are unofficial until certified."
-        )
-      )
+      shiny::uiOutput("source_method_note")
     )
   )
 )

@@ -376,13 +376,17 @@ tceq_empty_events <- function() {
 tceq_detect_short_spikes <- function(hourly, threshold = 35, maximum_hours = 5L) {
   require_packages(c("dplyr", "tibble"))
   if (!nrow(hourly)) return(tceq_empty_events())
+  event_clock <- if ("datetime_utc" %in% names(hourly)) {
+    hourly$datetime_utc
+  } else hourly$datetime_lstd
   x <- hourly |>
-    dplyr::arrange(.data$datetime_lstd) |>
+    dplyr::mutate(event_clock = event_clock) |>
+    dplyr::arrange(.data$event_clock) |>
     dplyr::mutate(
       qualifies = is.finite(.data$composite_pm25_ug_m3) &
         .data$composite_pm25_ug_m3 > threshold,
       elapsed_hours = c(
-        NA_real_, diff(as.numeric(.data$datetime_lstd)) / 3600
+        NA_real_, diff(as.numeric(.data$event_clock)) / 3600
       ),
       begins_run = .data$qualifies &
         (!dplyr::lag(.data$qualifies, default = FALSE) |

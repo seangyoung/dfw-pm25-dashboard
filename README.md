@@ -1,14 +1,15 @@
 # DFW PM2.5 Monitor Explorer
 
 An interactive dashboard for exploring hourly fine-particulate-matter (PM2.5)
-measurements from Texas Commission on Environmental Quality monitoring sites in
-the Dallas-Fort Worth region.
+measurements from Texas Commission on Environmental Quality regulatory monitors
+and City of Dallas AQMesh community sensors in the Dallas-Fort Worth region.
 
 The dashboard includes synchronized map and dropdown station selection, hourly
 date-by-hour heatmaps, navigable 7–90 day windows, long-term patterns,
 data-quality diagnostics, and exploratory event screening. It runs entirely in
 the browser through Shinylive; no server-side R session receives user activity
-or data.
+or data. A synchronized selector switches between **Combined**, **TCEQ**, and
+**Dallas AQMesh** networks.
 
 ## Event definitions
 
@@ -23,15 +24,21 @@ determinations or evidence of a particular emissions source.
 
 ## Data and provenance
 
-The versioned deployment cache contains public TCEQ monitoring data for 17
-physical monitoring locations. The site-hour composite prefers regulatory
-parameter 88101 and uses acceptable parameter 88502 only when no finite 88101
-measurement is available. It preserves underlying report-table records,
-data-quality flags, POC, report block, QA status, source filenames, station
-metadata provenance, and file hashes. Timestamps are presented as local
-standard time without daylight-saving shifts.
+The versioned deployment cache contains 17 public TCEQ monitoring locations and
+32 public City of Dallas AQMesh locations. The TCEQ site-hour composite prefers
+regulatory parameter 88101 and uses acceptable parameter 88502 only when no
+finite 88101 measurement is available. Dallas calculations use the City's
+scaled PM2.5 field and retain the latest append-date revision for each pod-hour.
+Underlying source records, quality flags, revision information, provenance,
+and file hashes are preserved in the prepared bundles.
 
-Source: [TCEQ Monthly Summary Report](https://www.tceq.texas.gov/cgi-bin/compliance/monops/monthly_summary.pl)
+TCEQ timestamps are presented as local standard time without daylight-saving
+shifts. Dallas event continuity is calculated in UTC; local heatmap display
+handles repeated daylight-saving fallback hours explicitly. Dallas AQMesh data
+are non-regulatory screening measurements and are not NAAQS determinations.
+
+Sources: [TCEQ Monthly Summary Report](https://www.tceq.texas.gov/cgi-bin/compliance/monops/monthly_summary.pl)
+and the [City of Dallas AQMesh ArcGIS service](https://www.arcgis.com/home/item.html?id=7f7293db60ed4beda4d64b3c848e2a5d).
 
 ## Run locally with R
 
@@ -49,18 +56,22 @@ is not required for dashboard use.
 ## Refresh the source data
 
 The reproducible acquisition and preparation scripts are included. From the
-repository root, the default workflow discovers both PM2.5 parameter streams,
-downloads through the most recent complete month, imports the reports, and
-rebuilds the local cache:
+repository root, these commands refresh both sources and rebuild the combined
+local cache:
 
 ```sh
 Rscript --vanilla scripts/08a_acquire_tceq_dfw_pm25_monthly.R --reuse-inventory
 Rscript --vanilla scripts/08c_prepare_tceq_dfw_pm25_dashboard.R
+Rscript --vanilla scripts/08f_acquire_dallas_aqmesh_hourly.R
+Rscript --vanilla scripts/08g_import_dallas_aqmesh_hourly.R
+Rscript --vanilla scripts/08h_prepare_combined_pm25_dashboard.R
 ```
 
 Parameter 88101 remains primary at each site-hour; parameter 88502 is retained
 and used only as a fallback. Raw parameter codes, POCs, report tables, QA
-statements, flags, and source filenames remain available for diagnostics.
+statements, flags, and source filenames remain available for diagnostics. The
+Dallas workflow archives the original paginated ArcGIS responses and retains
+superseded revisions for auditability.
 
 ## Browser compatibility
 

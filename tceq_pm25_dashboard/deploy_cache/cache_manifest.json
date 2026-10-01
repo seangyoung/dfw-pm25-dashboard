@@ -1,29 +1,44 @@
 {
-  "schema_version": 2,
-  "generated_at_utc": "2026-09-25 16:39:26 UTC",
-  "raw_data_dir": "Not included in the deployment bundle",
-  "raw_manifest_path": "download_manifest.csv",
-  "raw_manifest_sha256": "80ed1d35460d1798e1d3416cb194ea82ba52d263caf9e203fa3c2ec910405dc8",
-  "site_inventory_sha256": "7a6b41504189a5a31cec55e769fcc4dae277f005bf30d0c3553a9dcf4b4e04b3",
-  "station_count": 17,
-  "hourly_composite_rows": 1818264,
-  "valid_hourly_values": 1702658,
-  "event_count": 2812,
-  "short_spike_events": 2389,
-  "multi_day_events": 423,
+  "schema_version": 3,
+  "generated_at_utc": "2026-09-28 16:41:05 UTC",
+  "data_sources": ["TCEQ", "Dallas AQMesh"],
+  "source_counts": {
+    "Dallas AQMesh": 32,
+    "TCEQ": 17
+  },
+  "station_count": 49,
+  "hourly_composite_rows": 2432880,
+  "valid_hourly_values": 2117886,
+  "event_count": 3845,
   "first_date": "2000-01-01",
-  "last_date": "2026-08-31",
+  "last_date": "2026-09-28",
+  "preparation_command": "Rscript --vanilla scripts/08h_prepare_combined_pm25_dashboard.R",
+  "tceq": {
+    "source_cache": "Not included in the deployment bundle",
+    "cache_manifest_sha256": "5120568665b2a904fdab85729a530f2dc3c8e0657684d7ee9c294ea26256816b",
+    "raw_manifest_sha256": "80ed1d35460d1798e1d3416cb194ea82ba52d263caf9e203fa3c2ec910405dc8",
+    "parameter_priority": ["88101", "88502"]
+  },
+  "dallas_aqmesh": {
+    "source_import": "Not included in the deployment bundle",
+    "import_metadata_sha256": "62f51cd9ff02e9091bc2713541e31386a5c92aa52c463cb06e56af114b355810",
+    "raw_download_manifest_sha256": "19290702220f784f8223dbcec8b39af1b79ddc16bdaff1ce090850086a484397",
+    "analytical_value": "pm2_5_scaled",
+    "revision_rule": "Retain the maximum append_date, then maximum OBJECTID, within location_name x pod_serial_number x project_time_interval_start",
+    "regulatory_status": "Non-regulatory, unverified community-sensor data"
+  },
   "algorithms": {
-    "composite": "Use finite parameter 88101 values when available, otherwise parameter 88502; within the selected parameter prefer records explicitly meeting EPA QA criteria, then take the median of qualifying records",
-    "parameter_priority": ["88101", "88502"],
     "daily_minimum_valid_hours": 18,
-    "short_spike": "Strictly greater than 35 ug/m3 for a maximal run of 1-5 consecutive hours",
-    "multi_day": "At least two core days with daily max >25 and mean >20 ug/m3; one eligible trough day may bridge"
+    "short_spike": "Strictly greater than 35 ug/m3 for a maximal run of 1-5 consecutive UTC hours",
+    "multi_day": "At least two core days with daily max >25 and mean >20 ug/m3; one eligible trough day may bridge",
+    "dallas_dst_display": "Events use UTC continuity. Repeated fall-back display hours are represented by their median in the 24-column heatmap and retained separately in hourly_event."
   },
   "cache_files": {
     "station_index": "station_index.rds",
     "daily_index": "daily_index.rds",
     "event_index": "event_index.rds",
-    "sites": ["sites/48_439_3011.rds", "sites/48_113_0050.rds", "sites/48_349_1051.rds", "sites/48_113_1096.rds", "sites/48_121_0034.rds", "sites/48_439_1053.rds", "sites/48_439_1002.rds", "sites/48_439_3009.rds", "sites/48_439_1006.rds", "sites/48_139_1044.rds", "sites/48_257_0005.rds", "sites/48_113_0069.rds", "sites/48_439_3008.rds", "sites/48_139_0016.rds", "sites/48_139_0015.rds", "sites/48_139_0017.rds", "sites/48_113_3003.rds"]
-  }
+    "sites": ["sites/DAL_AQMESH_COLE_PARK.rds", "sites/DAL_AQMESH_CRAWFORD_MEMORIAL_PARK.rds", "sites/DAL_AQMESH_FISH_TRAP_LAKE_PARK.rds", "sites/DAL_AQMESH_FLAGPOLE_HILL_PARK.rds", "sites/DAL_AQMESH_FRETZ_PARK.rds", "sites/DAL_AQMESH_FRIENDSHIP_PARK.rds", "sites/DAL_AQMESH_LARRY_JOHNSON_RECREATION_CENTER.rds", "sites/DAL_AQMESH_MARTIN_WEISS_PARK.rds", "sites/DAL_AQMESH_MARTIN_WEISS_PARK_II.rds", "sites/DAL_AQMESH_MILL_CREEK_BATCH_PLANT.rds", "sites/DAL_AQMESH_MONEYGRAM_PARK.rds", "sites/DAL_AQMESH_MOUNTAIN_CREEK_LIBRARY.rds", "sites/DAL_AQMESH_PARK_FOREST_LIBRARY.rds", "sites/DAL_AQMESH_SAMUEL_GARLAND_PARK.rds", "sites/DAL_AQMESH_WEST_DALLAS_MULTIPURPOSE_CENTER.rds", "sites/DAL_AQMESH_WESTHAVEN_PARK.rds", "sites/DAL_AQMESH_ARCADIA_PARK.rds", "sites/DAL_AQMESH_CAMBELL_GREEN_PARK.rds", "sites/DAL_AQMESH_DALLAS_ZOO.rds", "sites/DAL_AQMESH_EMMA_CARTER_PARK.rds", "sites/DAL_AQMESH_FIFA_FAN_ZONE.rds", "sites/DAL_AQMESH_FLORAL_FARM_I.rds", "sites/DAL_AQMESH_FLORAL_FARM_II.rds", "sites/DAL_AQMESH_HOLCOMB_PARK.rds", "sites/DAL_AQMESH_JAYCEE_ZARAGOZA_PARK.rds", "sites/DAL_AQMESH_JOPPY_MOMMA_S_FARM.rds", "sites/DAL_AQMESH_LUNA_VISTA_GOLF_COURSE.rds", "sites/DAL_AQMESH_MYERS_PROSPERITY_PARK.rds", "sites/DAL_AQMESH_POLK_RECREATION_CENTER.rds", "sites/DAL_AQMESH_SOUTH_CENTRAL_PARK.rds", "sites/DAL_AQMESH_TOMMIE_ALLEN_RECREATION.rds", "sites/DAL_AQMESH_WILLIS_WINTERS_PARK.rds", "sites/48_439_3011.rds", "sites/48_113_0050.rds", "sites/48_349_1051.rds", "sites/48_113_1096.rds", "sites/48_121_0034.rds", "sites/48_439_1053.rds", "sites/48_439_1002.rds", "sites/48_439_3009.rds", "sites/48_439_1006.rds", "sites/48_139_1044.rds", "sites/48_257_0005.rds", "sites/48_113_0069.rds", "sites/48_439_3008.rds", "sites/48_139_0016.rds", "sites/48_139_0015.rds", "sites/48_139_0017.rds", "sites/48_113_3003.rds"]
+  },
+  "raw_data_dir": "Not included in the deployment bundle",
+  "raw_manifest_path": "tceq_download_manifest.csv"
 }

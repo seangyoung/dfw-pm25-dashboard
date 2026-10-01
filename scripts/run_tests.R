@@ -8,8 +8,10 @@ root <- if (length(script_arg)) {
 }
 source(file.path(root, "R", "utils.R"))
 source(file.path(root, "R", "tceq_pm25_dashboard.R"))
+source(file.path(root, "R", "dallas_aqmesh.R"))
 require_packages(c(
   "dplyr", "purrr", "shiny", "stringr", "tibble", "tidyr"
 ))
 sys.source(file.path(root, "tests", "test_tceq_pm25_dashboard.R"), envir = globalenv())
+sys.source(file.path(root, "tests", "test_dallas_aqmesh.R"), envir = globalenv())
 message("All dashboard tests passed.")
