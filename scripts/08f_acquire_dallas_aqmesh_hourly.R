@@ -57,6 +57,41 @@ fetch_arcgis <- function(url, attempts = 4L) {
   stop("Could not retrieve ArcGIS response after ", attempts, " attempts: ", last_error)
 }
 
+fetch_arcgis_post <- function(url, parameters, attempts = 4L) {
+  last_error <- NULL
+  for (attempt in seq_len(attempts)) {
+    handle <- curl::new_handle(
+      useragent = "TX-FireHealth Dallas AQMesh reproducible acquisition"
+    )
+    curl::handle_setform(handle, .list = as.list(parameters))
+    response <- tryCatch(
+      curl::curl_fetch_memory(url, handle = handle),
+      error = function(e) e
+    )
+    if (!inherits(response, "error") && response$status_code == 200L) {
+      parsed <- tryCatch(
+        jsonlite::fromJSON(rawToChar(response$content), simplifyVector = FALSE),
+        error = function(e) e
+      )
+      if (!inherits(parsed, "error") && is.null(parsed$error)) return(response$content)
+      last_error <- if (inherits(parsed, "error")) {
+        conditionMessage(parsed)
+      } else {
+        paste0("ArcGIS error: ", parsed$error$message)
+      }
+    } else {
+      last_error <- if (inherits(response, "error")) {
+        conditionMessage(response)
+      } else paste("HTTP", response$status_code)
+    }
+    Sys.sleep(min(2 ^ (attempt - 1L), 8))
+  }
+  stop(
+    "Could not retrieve ArcGIS POST response after ", attempts,
+    " attempts: ", last_error
+  )
+}
+
 atomic_write_raw <- function(content, path, gzip = FALSE) {
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   temporary <- tempfile(pattern = paste0(basename(path), "."), tmpdir = dirname(path))
@@ -74,6 +109,54 @@ query_json <- function(parameters) {
     paste0(aqmesh_hourly_layer_url(), "/query"),
     c(parameters, f = "json")
   ))), flatten = TRUE)
+}
+
+fetch_object_id_responses <- function(where, object_ids, batch_size = 250L) {
+  fetch_batch <- function(requested_ids) {
+    # OBJECTID lists can exceed ArcGIS and intermediary URL-length limits.
+    # POST keeps the request deterministic without placing the list in the URL.
+    content <- fetch_arcgis_post(
+      paste0(aqmesh_hourly_layer_url(), "/query"),
+      c(
+        where = where,
+        objectIds = paste(requested_ids, collapse = ","),
+        outFields = "*", returnGeometry = "false",
+        orderByFields = "OBJECTID ASC", f = "json"
+      )
+    )
+    parsed <- jsonlite::fromJSON(rawToChar(content), flatten = TRUE)
+    if (!is.null(parsed$error)) {
+      stop("ArcGIS error while retrieving an OBJECTID batch: ", parsed$error$message)
+    }
+    returned_ids <- if (is.null(parsed$features) || !nrow(parsed$features)) {
+      integer()
+    } else as.integer(parsed$features[["attributes.OBJECTID"]])
+    complete <- length(returned_ids) == length(requested_ids) &&
+      identical(sort(returned_ids), sort(as.integer(requested_ids)))
+    if (complete) {
+      return(list(list(
+        content = content, object_ids = returned_ids,
+        requested_ids = as.integer(requested_ids)
+      )))
+    }
+    if (length(requested_ids) <= 1L) {
+      stop(
+        "ArcGIS did not return requested OBJECTID ", requested_ids,
+        ". The source layer may have changed during acquisition."
+      )
+    }
+    midpoint <- floor(length(requested_ids) / 2L)
+    c(
+      fetch_batch(requested_ids[seq_len(midpoint)]),
+      fetch_batch(requested_ids[(midpoint + 1L):length(requested_ids)])
+    )
+  }
+
+  groups <- split(
+    as.integer(object_ids),
+    ceiling(seq_along(object_ids) / as.integer(batch_size))
+  )
+  unname(unlist(lapply(groups, fetch_batch), recursive = FALSE))
 }
 
 parse_month_argument <- function(args, name, default) {
@@ -139,6 +222,8 @@ if (start_month < available_first || end_month > available_last || start_month >
 
 months <- seq(start_month, end_month, by = "month")
 page_size <- 2000L
+object_id_batch_size <- 250L
+snapshot_tag <- format(Sys.time(), "%Y%m%dT%H%M%SZ", tz = "UTC")
 manifest_rows <- list()
 existing_manifest_path <- file.path(raw_dir, "download_manifest.csv")
 existing_manifest <- if (file.exists(existing_manifest_path)) {
@@ -157,33 +242,65 @@ for (month in months) {
   )
   count_response <- query_json(c(where = where, returnCountOnly = "true"))
   count <- as.integer(count_response$count)
-  offsets <- if (count) seq.int(0L, count - 1L, by = page_size) else integer()
   message(month_label, ": ", format(count, big.mark = ","), " source records")
-  if (!length(offsets)) next
   month_dir <- file.path(raw_dir, "pages", month_label)
   dir.create(month_dir, recursive = TRUE, showWarnings = FALSE)
-  for (offset in offsets) {
-    page_number <- offset %/% page_size + 1L
-    path <- file.path(month_dir, sprintf("page_%04d.json.gz", page_number))
-    should_fetch <- refresh || !file.exists(path) || month == available_last
-    if (should_fetch) {
-      content <- fetch_arcgis(url_with_query(
-        paste0(aqmesh_hourly_layer_url(), "/query"),
-        c(
-          where = where, outFields = "*", returnGeometry = "false",
-          orderByFields = "OBJECTID ASC", resultOffset = as.character(offset),
-          resultRecordCount = as.character(page_size), f = "json"
-        )
-      ))
-      atomic_write_raw(content, path, gzip = TRUE)
-    }
-    parsed <- jsonlite::fromJSON(gzfile(path), flatten = TRUE)
-    if (!is.null(parsed$error)) stop("ArcGIS error in ", path, ": ", parsed$error$message)
-    records <- if (is.null(parsed$features)) 0L else nrow(parsed$features)
-    expected <- min(page_size, count - offset)
-    if (records != expected) {
-      stop(path, " contains ", records, " records; expected ", expected, ".")
-    }
+  existing_month <- if (nrow(existing_manifest)) {
+    existing_manifest[existing_manifest$month == month_label, , drop = FALSE]
+  } else existing_manifest
+  existing_paths <- file.path(raw_dir, existing_month$relative_path)
+  existing_hashes_valid <- nrow(existing_month) > 0L &&
+    all(file.exists(existing_paths)) &&
+    identical(
+      unname(vapply(existing_paths, sha256_file, character(1))),
+      unname(existing_month$sha256)
+    )
+  reuse_month <- !refresh && month != available_last &&
+    nrow(existing_month) > 0L &&
+    sum(existing_month$records) == count && existing_hashes_valid
+  if (reuse_month) {
+    manifest_rows[[length(manifest_rows) + 1L]] <- existing_month
+    next
+  }
+  if (!count) next
+
+  id_content <- fetch_arcgis(url_with_query(
+    paste0(aqmesh_hourly_layer_url(), "/query"),
+    c(where = where, returnIdsOnly = "true", returnGeometry = "false", f = "json")
+  ))
+  id_response <- jsonlite::fromJSON(rawToChar(id_content), simplifyVector = TRUE)
+  if (!is.null(id_response$error)) {
+    stop("ArcGIS error while retrieving the ", month_label, " OBJECTID snapshot: ",
+         id_response$error$message)
+  }
+  object_ids <- sort(unique(as.integer(id_response$objectIds)))
+  object_ids <- object_ids[!is.na(object_ids)]
+  if (length(object_ids) != count) {
+    message(
+      month_label, ": count changed from ", format(count, big.mark = ","),
+      " to ", format(length(object_ids), big.mark = ","),
+      " while acquiring; using the stable OBJECTID snapshot."
+    )
+    count <- length(object_ids)
+  }
+  id_path <- file.path(
+    month_dir, paste0("object_ids_snapshot_", snapshot_tag, ".json")
+  )
+  atomic_write_raw(id_content, id_path)
+  responses <- fetch_object_id_responses(
+    where, object_ids, batch_size = object_id_batch_size
+  )
+  returned_ids <- integer()
+  offset <- 0L
+  for (page_number in seq_along(responses)) {
+    response <- responses[[page_number]]
+    path <- file.path(
+      month_dir,
+      sprintf("snapshot_%s_page_%04d.json.gz", snapshot_tag, page_number)
+    )
+    atomic_write_raw(response$content, path, gzip = TRUE)
+    records <- length(response$object_ids)
+    returned_ids <- c(returned_ids, response$object_ids)
     manifest_rows[[length(manifest_rows) + 1L]] <- tibble::tibble(
       month = month_label,
       page = page_number,
@@ -193,8 +310,20 @@ for (month in months) {
       relative_path = file.path("pages", month_label, basename(path)),
       sha256 = sha256_file(path),
       query_where = where,
+      query_strategy = "stable_object_id_snapshot",
+      object_id_min = min(response$object_ids),
+      object_id_max = max(response$object_ids),
+      object_ids_snapshot_path = file.path(
+        "pages", month_label, basename(id_path)
+      ),
+      object_ids_snapshot_sha256 = sha256_file(id_path),
       retrieved_or_validated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE)
     )
+    offset <- offset + records
+  }
+  if (length(returned_ids) != length(object_ids) ||
+      !identical(sort(returned_ids), object_ids) || anyDuplicated(returned_ids)) {
+    stop(month_label, " OBJECTID snapshot was not reproduced exactly by page retrieval.")
   }
 }
 
@@ -221,6 +350,12 @@ metadata <- list(
   selected_first_month = format(start_month, "%Y-%m"),
   selected_last_month = format(end_month, "%Y-%m"),
   page_size = page_size,
+  object_id_batch_size = object_id_batch_size,
+  pagination_strategy = paste(
+    "Historical complete months reuse hash-validated pages.",
+    "New or mutable months use a stable OBJECTID snapshot and recursively split",
+    "partial ArcGIS responses until every requested OBJECTID is archived exactly once."
+  ),
   records = sum(manifest$records),
   files = nrow(manifest),
   download_manifest_sha256 = sha256_file(file.path(raw_dir, "download_manifest.csv")),

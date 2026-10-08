@@ -5,9 +5,16 @@ find_repo_root <- function(start = getwd()) {
         dir.exists(file.path(here, "R")) &&
         dir.exists(file.path(here, "scripts"))) return(here)
 
+    # Preserve convenient execution from the historical parent directory while
+    # allowing the project to be cloned and renamed as a standalone repository.
+    nested <- file.path(here, "TX_FireHealth")
+    if (file.exists(file.path(nested, "config", "config.yml")) &&
+        dir.exists(file.path(nested, "R")) &&
+        dir.exists(file.path(nested, "scripts"))) return(nested)
+
     parent <- dirname(here)
     if (identical(parent, here)) {
-      stop("Could not locate the dashboard repository root.")
+      stop("Could not locate the project root containing config/, R/, and scripts/.")
     }
     here <- parent
   }

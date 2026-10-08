@@ -11,6 +11,13 @@ the browser through Shinylive; no server-side R session receives user activity
 or data. A synchronized selector switches between **Combined**, **TCEQ**, and
 **Dallas AQMesh** networks.
 
+The **Regional analysis** section compares existing multi-day events directly
+across sensors and provides network-balanced reach summaries. Its spatial view
+uses separately calculated TCEQ and AQMesh inverse-distance-weighted surfaces,
+with Combined, network-specific, disagreement, support, and bounded animation
+views. Unsupported areas remain blank. Event filters can narrow anchors by
+network, minimum duration, and the number of sites sharing a core event date.
+
 ## Event definitions
 
 - A **short-term spike** is a maximal run of one to five consecutive hourly
@@ -21,6 +28,10 @@ or data. A synchronized selector switches between **Combined**, **TCEQ**, and
 
 These are exploratory screening definitions, not regulatory exceedance
 determinations or evidence of a particular emissions source.
+
+Regional surfaces are also exploratory. They are constrained by sensor
+coverage and interpolation support and should not be interpreted as exposure
+assignments, causal source attribution, or regulatory determinations.
 
 ## Data and provenance
 

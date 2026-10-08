@@ -9,6 +9,7 @@ root <- if (length(script_arg)) {
 source(file.path(root, "R", "utils.R"))
 source(file.path(root, "R", "tceq_pm25_dashboard.R"))
 source(file.path(root, "R", "dallas_aqmesh.R"))
+source(file.path(root, "R", "pm25_regional.R"))
 require_packages(c(
   "dplyr", "purrr", "shiny", "stringr", "tibble", "tidyr"
 ))

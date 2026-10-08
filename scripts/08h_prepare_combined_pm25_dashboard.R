@@ -11,8 +11,10 @@ if (length(script_arg)) {
 source(file.path(root, "R", "utils.R"))
 source(file.path(root, "R", "tceq_pm25_dashboard.R"))
 source(file.path(root, "R", "dallas_aqmesh.R"))
+source(file.path(root, "R", "pm25_regional.R"))
 require_packages(c(
-  "digest", "dplyr", "jsonlite", "purrr", "readr", "tibble", "tidyr", "yaml"
+  "curl", "digest", "dplyr", "jsonlite", "purrr", "readr", "sf", "tibble",
+  "tidyr", "yaml"
 ))
 
 atomic_save_rds <- function(object, path) {
@@ -20,6 +22,15 @@ atomic_save_rds <- function(object, path) {
   temporary <- tempfile(pattern = paste0(basename(path), "."), tmpdir = dirname(path))
   on.exit(unlink(temporary), add = TRUE)
   saveRDS(object, temporary, compress = "gzip")
+  if (!file.rename(temporary, path)) stop("Could not atomically replace ", path)
+  invisible(path)
+}
+
+atomic_save_rds_xz <- function(object, path) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  temporary <- tempfile(pattern = paste0(basename(path), "."), tmpdir = dirname(path))
+  on.exit(unlink(temporary), add = TRUE)
+  saveRDS(object, temporary, compress = "xz")
   if (!file.rename(temporary, path)) stop("Could not atomically replace ", path)
   invisible(path)
 }
@@ -36,10 +47,13 @@ args <- commandArgs(trailingOnly = TRUE)
 tceq_arg <- grep("^--tceq-cache-dir=", args, value = TRUE)
 aqmesh_arg <- grep("^--aqmesh-import-dir=", args, value = TRUE)
 cache_arg <- grep("^--cache-dir=", args, value = TRUE)
-if (any(c(length(tceq_arg), length(aqmesh_arg), length(cache_arg)) > 1L)) {
+boundary_arg <- grep("^--boundary-dir=", args, value = TRUE)
+if (any(c(
+    length(tceq_arg), length(aqmesh_arg), length(cache_arg), length(boundary_arg)
+  ) > 1L)) {
   stop("Specify each directory argument no more than once.")
 }
-unknown <- setdiff(args, c(tceq_arg, aqmesh_arg, cache_arg))
+unknown <- setdiff(args, c(tceq_arg, aqmesh_arg, cache_arg, boundary_arg))
 if (length(unknown)) stop("Unknown arguments: ", paste(unknown, collapse = ", "))
 
 cfg <- read_config()
@@ -52,6 +66,9 @@ aqmesh_import <- if (length(aqmesh_arg)) {
 cache_dir <- if (length(cache_arg)) {
   normalizePath(sub("^--cache-dir=", "", cache_arg), mustWork = FALSE)
 } else pm25_dashboard_cache_dir(cfg)
+boundary_dir <- if (length(boundary_arg)) {
+  normalizePath(sub("^--boundary-dir=", "", boundary_arg), mustWork = FALSE)
+} else file.path(cfg$paths$reference, "dfw_pm25_dashboard")
 
 required_tceq <- file.path(
   tceq_cache, c("station_index.rds", "event_index.rds", "cache_manifest.json")
@@ -84,6 +101,7 @@ aqmesh_manifest <- jsonlite::read_json(
 site_summaries <- list()
 daily_indexes <- list()
 event_indexes <- list()
+regional_hourly_rows <- list()
 
 message("Normalizing ", nrow(tceq_stations), " TCEQ site bundles...")
 for (site_id in tceq_stations$aqs_site_id) {
@@ -134,6 +152,10 @@ for (site_id in tceq_stations$aqs_site_id) {
     )
   daily_indexes[[site_id]] <- bundle$daily
   event_indexes[[site_id]] <- bundle$events
+  regional_hourly_rows[[site_id]] <- bundle$hourly |>
+    dplyr::select(
+      "aqs_site_id", "datetime_utc", "composite_pm25_ug_m3"
+    )
   rm(bundle)
   invisible(gc())
 }
@@ -211,6 +233,10 @@ for (site_id in field_ids) {
     )
   daily_indexes[[site_id]] <- daily
   event_indexes[[site_id]] <- events
+  regional_hourly_rows[[site_id]] <- hourly_utc |>
+    dplyr::select(
+      "aqs_site_id", "datetime_utc", "composite_pm25_ug_m3"
+    )
   rm(raw, diagnostic_raw, hourly_utc, hourly, daily, events, bundle)
   invisible(gc())
 }
@@ -226,14 +252,69 @@ daily_index <- dplyr::bind_rows(daily_indexes) |>
 event_index <- dplyr::bind_rows(event_indexes) |>
   dplyr::arrange(.data$aqs_site_id, .data$start_lstd, .data$event_type)
 
+message("Preparing compact regional cross-sensor caches...")
+regional_daily <- pm25_build_regional_daily(
+  daily_index, event_index, station_index
+)
+regional_reach <- pm25_daily_reach(regional_daily)
+regional_event_links <- pm25_build_regional_event_links(
+  event_index, station_index
+)
+regional_hourly <- pm25_build_regional_hourly(
+  dplyr::bind_rows(regional_hourly_rows), station_index
+)
+counties <- pm25_download_county_boundary(boundary_dir, year = 2024L)
+spatial_support <- pm25_build_spatial_support(
+  station_index, counties, grid_resolution_m = 4000, analysis_crs = 3083
+)
+spatial_validation <- pm25_surface_validation(
+  regional_daily, station_index, spatial_support, regional_hourly
+)
+
 atomic_save_rds(station_index, file.path(cache_dir, "station_index.rds"))
 atomic_save_rds(daily_index, file.path(cache_dir, "daily_index.rds"))
 atomic_save_rds(event_index, file.path(cache_dir, "event_index.rds"))
+atomic_save_rds_xz(regional_daily, file.path(cache_dir, "regional_daily.rds"))
+atomic_save_rds_xz(regional_reach, file.path(cache_dir, "regional_reach.rds"))
+atomic_save_rds_xz(
+  regional_event_links, file.path(cache_dir, "regional_event_links.rds")
+)
+hourly_directory <- file.path(cache_dir, "regional_hourly")
+hourly_temporary <- tempfile("regional_hourly_", tmpdir = cache_dir)
+dir.create(hourly_temporary, recursive = TRUE)
+for (year in names(regional_hourly$shards)) {
+  saveRDS(
+    regional_hourly$shards[[year]],
+    file.path(hourly_temporary, paste0("year_", year, ".rds")),
+    compress = "xz"
+  )
+}
+if (dir.exists(hourly_directory)) unlink(hourly_directory, recursive = TRUE)
+if (!file.rename(hourly_temporary, hourly_directory)) {
+  stop("Could not atomically replace the regional hourly shards.")
+}
+atomic_save_rds_xz(
+  regional_hourly$index, file.path(cache_dir, "regional_hourly_index.rds")
+)
+atomic_save_rds_xz(spatial_support, file.path(cache_dir, "spatial_support.rds"))
+atomic_save_rds_xz(
+  spatial_validation, file.path(cache_dir, "spatial_validation.rds")
+)
 atomic_write_csv(station_index, file.path(cache_dir, "station_index.csv"))
 atomic_write_csv(event_index, file.path(cache_dir, "event_index.csv"))
 
+regional_files <- c(
+  regional_daily = "regional_daily.rds",
+  regional_reach = "regional_reach.rds",
+  regional_event_links = "regional_event_links.rds",
+  regional_hourly_index = "regional_hourly_index.rds",
+  spatial_support = "spatial_support.rds",
+  spatial_validation = "spatial_validation.rds"
+)
+regional_hourly_files <- regional_hourly$index$years$file
+all_regional_files <- c(regional_files, regional_hourly_files)
 manifest <- list(
-  schema_version = 3L,
+  schema_version = 4L,
   generated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
   data_sources = c("TCEQ", "Dallas AQMesh"),
   source_counts = as.list(table(station_index$data_source)),
@@ -243,7 +324,7 @@ manifest <- list(
   event_count = nrow(event_index),
   first_date = format(min(station_index$first_date), "%Y-%m-%d"),
   last_date = format(max(station_index$last_date), "%Y-%m-%d"),
-  preparation_command = "Rscript --vanilla scripts/08h_prepare_combined_pm25_dashboard.R",
+  preparation_command = "Rscript --vanilla scripts/08i_update_dfw_pm25_dashboard.R",
   tceq = list(
     source_cache = normalizePath(tceq_cache, winslash = "/"),
     cache_manifest_sha256 = sha256_file(file.path(tceq_cache, "cache_manifest.json")),
@@ -258,6 +339,29 @@ manifest <- list(
     revision_rule = aqmesh_manifest$revision_rule,
     regulatory_status = "Non-regulatory, unverified community-sensor data"
   ),
+  regional_analysis = list(
+    boundary = "NCTCOG 16-county region",
+    boundary_source_url = spatial_support$source_url,
+    boundary_retrieved_at_utc = spatial_support$retrieved_at_utc,
+    analysis_crs = spatial_support$analysis_crs,
+    grid_resolution_m = spatial_support$grid_resolution_m,
+    idw_power = 2,
+    idw_neighbours = 8L,
+    idw_radius_m = 50000,
+    support_nearest_m = 25000,
+    support_minimum_nearby_sites = 3L,
+    balanced_participation_minimum_network_sites = 3L,
+    hourly_rows = sum(regional_hourly$index$years$rows),
+    hourly_files = as.list(regional_hourly_files),
+    grid_cells = sum(spatial_support$grid$inside_region),
+    validation = spatial_validation,
+    files = as.list(regional_files),
+    file_sha256 = stats::setNames(as.list(vapply(
+      all_regional_files,
+      function(path) sha256_file(file.path(cache_dir, path)),
+      character(1), USE.NAMES = FALSE
+    )), all_regional_files)
+  ),
   algorithms = list(
     daily_minimum_valid_hours = 18L,
     short_spike = "Strictly greater than 35 ug/m3 for a maximal run of 1-5 consecutive UTC hours",
@@ -271,6 +375,7 @@ manifest <- list(
     station_index = "station_index.rds",
     daily_index = "daily_index.rds",
     event_index = "event_index.rds",
+    regional = as.list(regional_files),
     sites = station_index$site_cache_file
   )
 )

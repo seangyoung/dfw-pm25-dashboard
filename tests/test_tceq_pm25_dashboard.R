@@ -158,6 +158,135 @@ stopifnot(nrow(tceq_detect_multiday_events(
   exact_coverage$daily, exact_coverage$hourly
 )) == 1L)
 
+# Cross-sensor reach is network-balanced, so the denser AQMesh network does not
+# automatically dominate the primary regional percentage.
+regional_reach_fixture <- dplyr::bind_rows(
+  tibble::tibble(
+    date = as.Date("2024-05-21"), data_source = "TCEQ",
+    event_eligible = TRUE, threshold_core = c(TRUE, TRUE, TRUE),
+    event_active = TRUE
+  ),
+  tibble::tibble(
+    date = as.Date("2024-05-21"), data_source = "Dallas AQMesh",
+    event_eligible = TRUE,
+    threshold_core = c(TRUE, FALSE, FALSE, FALSE, FALSE, FALSE),
+    event_active = c(TRUE, rep(FALSE, 5))
+  )
+)
+regional_reach_test <- pm25_daily_reach(regional_reach_fixture)
+stopifnot(
+  nrow(regional_reach_test) == 1L,
+  abs(regional_reach_test$balanced_participation_percent - (100 + 100 / 6) / 2) < 1e-8,
+  abs(regional_reach_test$raw_affected_percent - 100 * 4 / 9) < 1e-8,
+  regional_reach_test$coverage_label == "Both networks"
+)
+
+# Direct overlap links do not chain A to C merely because both overlap B.
+regional_station_fixture <- tibble::tibble(
+  aqs_site_id = c("a", "b", "c"), site_name = c("A", "B", "C"),
+  data_source = c("TCEQ", "Dallas AQMesh", "TCEQ"),
+  latitude = c(32.7, 32.8, 32.9), longitude = c(-97.1, -97.0, -96.9)
+)
+regional_event_fixture <- tibble::tibble(
+  aqs_site_id = c("a", "b", "c"), event_id = c("e1", "e2", "e3"),
+  event_type = "multi_day", data_source = regional_station_fixture$data_source,
+  start_date = as.Date(c("2024-01-01", "2024-01-02", "2024-01-04")),
+  end_date = as.Date(c("2024-01-03", "2024-01-05", "2024-01-06")),
+  core_dates = c(
+    "2024-01-01|2024-01-02", "2024-01-02|2024-01-04",
+    "2024-01-04|2024-01-05"
+  ),
+  trough_dates = c("2024-01-03", "2024-01-03", "2024-01-06"),
+  peak_hourly_ug_m3 = c(40, 42, 44), peak_daily_max_ug_m3 = c(35, 36, 37),
+  max_daily_avg_ug_m3 = c(22, 23, 24), coverage_warning = FALSE,
+  qa_fallback = FALSE, parameter_fallback = FALSE
+)
+regional_link_test <- pm25_build_regional_event_links(
+  regional_event_fixture, regional_station_fixture
+)
+links_from_a <- regional_link_test[
+  regional_link_test$anchor_event_key == "a::e1", , drop = FALSE
+]
+stopifnot(
+  nrow(links_from_a) == 1L,
+  links_from_a$other_event_key == "b::e2",
+  links_from_a$relationship == "shared_core",
+  links_from_a$shared_core_days == 1L
+)
+
+# UTC rows remain distinct through a repeated local fall-back hour.
+regional_hourly_fixture <- tibble::tibble(
+  aqs_site_id = rep("a", 2),
+  datetime_utc = as.POSIXct(
+    c("2024-11-03 06:00:00", "2024-11-03 07:00:00"), tz = "UTC"
+  ),
+  composite_pm25_ug_m3 = c(10, 12)
+)
+regional_hourly_test <- pm25_build_regional_hourly(
+  regional_hourly_fixture, regional_station_fixture[1, , drop = FALSE]
+)
+stopifnot(
+  nrow(regional_hourly_test$index$years) == 1L,
+  length(regional_hourly_test$shards[["2024"]]$timestamp_utc) == 2L,
+  identical(
+    as.numeric(regional_hourly_test$shards[["2024"]]$values[, 1]), c(10, 12)
+  )
+)
+
+# IDW requires supported geometry and blends network surfaces by local support.
+regional_spatial_fixture <- list(
+  grid = tibble::tibble(
+    x = 0, y = 0.5, longitude = -97, latitude = 32.75,
+    inside_region = TRUE, row = 1L, column = 1L
+  ),
+  x_values = 0, y_values = 0.5,
+  station_ids = c("t1", "t2", "t3", "q1", "q2", "q3"),
+  station_network = c(rep("TCEQ", 3), rep("Dallas AQMesh", 3)),
+  station_x = c(-1000, 1000, 0, -1200, 1200, 0),
+  station_y = c(0, 0, 2000, -200, -200, 2200),
+  distances_m = matrix(
+    sqrt((c(-1000, 1000, 0, -1200, 1200, 0) - 0)^2 +
+      (c(0, 0, 2000, -200, -200, 2200) - 500)^2),
+    nrow = 1
+  )
+)
+regional_surface_test <- pm25_interpolate_surface(
+  c(t1 = 10, t2 = 20, t3 = 30, q1 = 30, q2 = 40, q3 = 50),
+  regional_spatial_fixture
+)
+stopifnot(
+  regional_surface_test$supported,
+  is.finite(regional_surface_test$combined),
+  regional_surface_test$combined > regional_surface_test$tceq$value,
+  regional_surface_test$combined < regional_surface_test$aqmesh$value,
+  regional_surface_test$contribution == "Both networks"
+)
+insufficient_surface <- pm25_interpolate_surface(
+  c(t1 = 10, t2 = 20), regional_spatial_fixture, view = "TCEQ"
+)
+stopifnot(!insufficient_surface$supported, is.na(insufficient_surface$value))
+
+validation_daily_fixture <- tibble::tibble(
+  aqs_site_id = regional_spatial_fixture$station_ids,
+  date = as.Date("2024-07-01"),
+  computed_daily_avg_ug_m3 = c(10, 20, 30, 30, 40, 50),
+  computed_daily_max_ug_m3 = c(15, 25, 35, 35, 45, 55)
+)
+validation_station_fixture <- tibble::tibble(
+  aqs_site_id = regional_spatial_fixture$station_ids,
+  data_source = regional_spatial_fixture$station_network
+)
+validation_summary_test <- pm25_surface_validation(
+  validation_daily_fixture, validation_station_fixture,
+  regional_spatial_fixture, daily_frame_limit = 1L
+)
+stopifnot(
+  nrow(validation_summary_test) == 4L,
+  all(c("mae", "rmse", "bias", "observations") %in%
+    names(validation_summary_test)),
+  all(validation_summary_test$observations >= 0L)
+)
+
 loader_reads <- new.env(parent = emptyenv())
 loader_reads$n <- integer()
 bounded_loader <- tceq_dashboard_bundle_loader(
@@ -317,5 +446,92 @@ shiny::testServer(
     stopifnot(identical(input$raw_series, raw_key))
     session$flushReact()
     stopifnot(identical(input$raw_series, raw_key))
+  }
+)
+
+# Regional server logic stays lazy and preserves direct anchor-event comparison.
+regional_anchor_event <- server_bundles$site_a$events[1, , drop = FALSE] |>
+  dplyr::mutate(
+    event_id = "MULTI_site_a_20240101",
+    event_type = "multi_day",
+    start_date = as.Date("2024-01-01"), end_date = as.Date("2024-01-02"),
+    span_days = 2L, duration_hours = 48,
+    core_dates = "2024-01-01|2024-01-02", trough_dates = ""
+  )
+regional_server_events <- dplyr::bind_rows(server_events, regional_anchor_event)
+regional_server_daily <- dplyr::bind_rows(
+  tibble::tibble(
+    aqs_site_id = "site_a", date = as.Date(c("2024-01-01", "2024-01-02")),
+    data_source = "TCEQ", valid_hours = 24L,
+    computed_daily_max_ug_m3 = c(42, 38),
+    computed_daily_avg_ug_m3 = c(24, 22), qa_fallback_hours = 0L,
+    parameter_fallback_hours = 0L, event_eligible = TRUE,
+    threshold_core = TRUE, event_active = TRUE, event_core = TRUE,
+    event_trough = FALSE
+  ),
+  tibble::tibble(
+    aqs_site_id = "site_b", date = as.Date(c("2024-01-01", "2024-01-02")),
+    data_source = "Dallas AQMesh", valid_hours = 24L,
+    computed_daily_max_ug_m3 = c(20, 18),
+    computed_daily_avg_ug_m3 = c(12, 11), qa_fallback_hours = 0L,
+    parameter_fallback_hours = 0L, event_eligible = TRUE,
+    threshold_core = FALSE, event_active = FALSE, event_core = FALSE,
+    event_trough = FALSE
+  )
+)
+regional_server_reach <- pm25_daily_reach(regional_server_daily)
+regional_server_links <- tibble::tibble(
+  anchor_event_key = "site_a::MULTI_site_a_20240101",
+  relationship = "shared_core", other_data_source = "Dallas AQMesh",
+  other_site_name = "B site", other_site_id = "site_b", other_event_id = "b-event",
+  other_start_date = as.Date("2024-01-02"), other_end_date = as.Date("2024-01-03"),
+  shared_core_dates = "2024-01-02", shared_core_days = 1L,
+  span_overlap_days = 1L, start_lag_days = 1L, distance_km = 12,
+  peak_hourly_ug_m3 = 40, peak_daily_max_ug_m3 = 35,
+  max_daily_avg_ug_m3 = 22, coverage_warning = "", qa_fallback = FALSE,
+  parameter_fallback = FALSE
+)
+regional_loader <- function(name) switch(
+  name,
+  daily = regional_server_daily,
+  reach = regional_server_reach,
+  links = regional_server_links,
+  spatial = regional_spatial_fixture,
+  NULL
+)
+shiny::testServer(
+  tceq_dashboard_server(
+    server_stations, regional_server_events,
+    load_bundle = function(site_id) server_bundles[[site_id]],
+    load_regional = regional_loader, regional_available = TRUE
+  ),
+  {
+    session$setInputs(
+      dashboard_tabs = "regional",
+      regional_tabs = "Event alignment",
+      regional_anchor = "site_a::MULTI_site_a_20240101",
+      regional_dates = as.Date(c("2024-01-01", "2024-01-02")),
+      regional_event_network = "All", regional_event_min_days = "2",
+      regional_event_min_sites = "2",
+      regional_metric = "daily_avg", regional_map_view = "Combined",
+      regional_layer = "concentration"
+    )
+    session$flushReact()
+    stopifnot(
+      regional_anchor()$event_id == "MULTI_site_a_20240101",
+      nrow(regional_window_daily()) == 4L,
+      nrow(regional_window_reach()) == 2L,
+      nrow(regional_anchor_links()) == 1L,
+      regional_anchor_links()$relationship == "shared_core",
+      nrow(regional_filtered_events()) == 1L,
+      regional_filtered_events()$aligned_sites == 2L,
+      regional_frame_index() == 1L
+    )
+    session$setInputs(regional_tabs = "Spatial surface", regional_generate = 1L)
+    session$flushReact()
+    stopifnot(
+      identical(rv$regional_animation$key, regional_surface_key()),
+      length(rv$regional_animation$frames) == 2L
+    )
   }
 )

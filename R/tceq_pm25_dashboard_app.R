@@ -211,7 +211,8 @@ tceq_dashboard_yearly_quality <- function(bundle) {
 
 tceq_dashboard_server <- function(
     station_index, event_index, load_bundle, cache_manifest = list(),
-    cache_stale = FALSE) {
+    cache_stale = FALSE, load_regional = function(name) NULL,
+    regional_available = FALSE) {
   if (!"data_source" %in% names(station_index)) {
     station_index$data_source <- "TCEQ"
     station_index$network_label <- "Texas Commission on Environmental Quality"
@@ -231,12 +232,15 @@ tceq_dashboard_server <- function(
   force(load_bundle)
   force(cache_manifest)
   force(cache_stale)
+  force(load_regional)
+  force(regional_available)
 
   function(input, output, session) {
     rv <- shiny::reactiveValues(
       site = tceq_dashboard_default_site(station_index),
       window_days = 30L,
-      pending_date_range = NULL
+      pending_date_range = NULL,
+      regional_animation = NULL
     )
 
     available_stations <- shiny::reactive({
@@ -461,7 +465,7 @@ tceq_dashboard_server <- function(
         return(shiny::div(
           class = "cache-alert",
           shiny::strong("The dashboard cache is older than the raw download manifest."),
-          shiny::div("Run: Rscript --vanilla scripts/08h_prepare_combined_pm25_dashboard.R")
+          shiny::div("Run: Rscript --vanilla scripts/08i_update_dfw_pm25_dashboard.R")
         ))
       }
       generated <- cache_manifest$generated_at_utc
@@ -1088,6 +1092,918 @@ tceq_dashboard_server <- function(
         )
       }
     })
+
+    regional_events <- event_index[event_index$event_type == "multi_day", , drop = FALSE]
+    regional_events$event_key <- pm25_event_key(
+      regional_events$aqs_site_id, regional_events$event_id
+    )
+
+    regional_anchor <- shiny::reactive({
+      shiny::req(nrow(regional_events) > 0L)
+      key <- input$regional_anchor
+      shiny::req(length(key) == 1L, !is.na(key), nzchar(key))
+      row <- match(key, regional_events$event_key)
+      shiny::req(!is.na(row))
+      regional_events[row, , drop = FALSE]
+    })
+
+    shiny::observeEvent(regional_anchor(), {
+      event <- regional_anchor()
+      start <- as.Date(event$start_date) - 2L
+      end <- as.Date(event$end_date) + 2L
+      if (as.integer(end - start) + 1L > 90L) end <- start + 89L
+      shiny::updateDateRangeInput(
+        session, "regional_dates", start = start, end = end,
+        min = min(station_index$first_date), max = max(station_index$last_date)
+      )
+    }, ignoreInit = FALSE)
+
+    regional_dates <- shiny::reactive({
+      dates <- suppressWarnings(as.Date(input$regional_dates))
+      shiny::validate(shiny::need(
+        length(dates) == 2L && !anyNA(dates) && dates[1] <= dates[2],
+        "Select a valid regional date range."
+      ))
+      shiny::validate(shiny::need(
+        as.integer(dates[2] - dates[1]) + 1L <= 90L,
+        "Regional daily views are limited to 90 days."
+      ))
+      dates
+    })
+
+    shiny::observeEvent(input$regional_metric, {
+      if (!identical(input$regional_metric, "hourly")) return()
+      dates <- suppressWarnings(as.Date(input$regional_dates))
+      if (length(dates) != 2L || anyNA(dates)) return()
+      if (as.integer(dates[2] - dates[1]) + 1L > 7L) {
+        shiny::updateDateRangeInput(
+          session, "regional_dates", start = dates[1], end = dates[1] + 6L
+        )
+      }
+    }, ignoreInit = TRUE)
+
+    regional_daily <- shiny::reactive({
+      shiny::validate(shiny::need(
+        isTRUE(regional_available),
+        "Regional caches are unavailable. Run scripts/08i_update_dfw_pm25_dashboard.R."
+      ))
+      load_regional("daily")
+    })
+    regional_reach <- shiny::reactive({
+      shiny::validate(shiny::need(isTRUE(regional_available), "Regional cache unavailable."))
+      load_regional("reach")
+    })
+    regional_links <- shiny::reactive({
+      shiny::validate(shiny::need(isTRUE(regional_available), "Regional cache unavailable."))
+      load_regional("links")
+    })
+
+    regional_event_filter_data <- shiny::reactive({
+      shiny::req(
+        identical(input$dashboard_tabs, "regional"),
+        identical(input$regional_tabs, "Event alignment")
+      )
+      links <- regional_links()
+      aligned <- links |>
+        dplyr::filter(.data$relationship == "shared_core") |>
+        dplyr::group_by(.data$anchor_event_key) |>
+        dplyr::summarise(
+          aligned_other_sites = dplyr::n_distinct(.data$other_site_id),
+          .groups = "drop"
+        )
+      regional_events |>
+        dplyr::left_join(
+          station_index |>
+            dplyr::select("aqs_site_id", "site_name") |>
+            dplyr::distinct(),
+          by = "aqs_site_id"
+        ) |>
+        dplyr::left_join(aligned, by = c("event_key" = "anchor_event_key")) |>
+        dplyr::mutate(
+          aligned_other_sites = dplyr::coalesce(.data$aligned_other_sites, 0L),
+          aligned_sites = .data$aligned_other_sites + 1L
+        )
+    })
+
+    regional_filtered_events <- shiny::reactive({
+      data <- regional_event_filter_data()
+      network <- input$regional_event_network
+      minimum_days <- suppressWarnings(as.integer(input$regional_event_min_days))
+      minimum_sites <- suppressWarnings(as.integer(input$regional_event_min_sites))
+      if (length(minimum_days) != 1L || is.na(minimum_days)) minimum_days <- 2L
+      if (length(minimum_sites) != 1L || is.na(minimum_sites)) minimum_sites <- 1L
+      if (length(network) == 1L && !is.na(network) && network != "All") {
+        data <- data[data$data_source == network, , drop = FALSE]
+      }
+      data |>
+        dplyr::filter(
+          .data$span_days >= minimum_days,
+          .data$aligned_sites >= minimum_sites
+        ) |>
+        dplyr::arrange(dplyr::desc(.data$start_date), .data$site_name)
+    })
+
+    shiny::observeEvent(
+      list(
+        input$dashboard_tabs, input$regional_tabs,
+        input$regional_event_network, input$regional_event_min_days,
+        input$regional_event_min_sites
+      ),
+      {
+        if (!identical(input$dashboard_tabs, "regional") ||
+            !identical(input$regional_tabs, "Event alignment")) return()
+        data <- regional_filtered_events()
+        choices <- if (nrow(data)) {
+          stats::setNames(
+            data$event_key,
+            paste0(
+              data$site_name, " · ", data$data_source, " · ",
+              data$start_date, " to ", data$end_date, " · ",
+              data$span_days, " days · ", data$aligned_sites, " aligned sites"
+            )
+          )
+        } else character()
+        current <- shiny::isolate(input$regional_anchor)
+        selected <- if (length(current) == 1L && current %in% unname(choices)) {
+          current
+        } else if (length(choices)) unname(choices[[1]]) else character()
+        shiny::updateSelectizeInput(
+          session, "regional_anchor", choices = choices,
+          selected = selected, server = FALSE
+        )
+      }, ignoreInit = FALSE
+    )
+
+    output$regional_event_filter_status <- shiny::renderUI({
+      data <- regional_filtered_events()
+      total <- nrow(regional_event_filter_data())
+      shiny::p(
+        class = "method-note regional-filter-status",
+        paste0(
+          "Showing ", nrow(data), " of ", total, " MDPEs. Aligned sites include ",
+          "the anchor plus sites whose existing MDPE shares a core date."
+        )
+      )
+    })
+    regional_spatial <- shiny::reactive({
+      shiny::validate(shiny::need(isTRUE(regional_available), "Regional cache unavailable."))
+      load_regional("spatial")
+    })
+    regional_validation <- shiny::reactive({
+      shiny::validate(shiny::need(isTRUE(regional_available), "Regional cache unavailable."))
+      load_regional("validation")
+    })
+
+    regional_window_daily <- shiny::reactive({
+      dates <- regional_dates()
+      regional_daily() |>
+        dplyr::filter(.data$date >= dates[1], .data$date <= dates[2])
+    })
+    regional_window_reach <- shiny::reactive({
+      dates <- regional_dates()
+      regional_reach() |>
+        dplyr::filter(.data$date >= dates[1], .data$date <= dates[2])
+    })
+    regional_anchor_links <- shiny::reactive({
+      links <- regional_links()
+      if (is.null(links) || !nrow(links)) return(links)
+      links[links$anchor_event_key == regional_anchor()$event_key, , drop = FALSE]
+    })
+
+    regional_alignment_data <- shiny::reactive({
+      dates <- regional_dates()
+      data <- regional_window_daily() |>
+        dplyr::mutate(status = dplyr::case_when(
+          .data$event_core ~ "Core day",
+          .data$event_trough ~ "Trough day",
+          .data$event_active ~ "Event span",
+          .data$event_eligible ~ "Eligible non-event",
+          .data$valid_hours > 0L ~ "Incomplete",
+          TRUE ~ "Missing"
+        ))
+      grid <- tidyr::crossing(
+        aqs_site_id = station_index$aqs_site_id,
+        date = seq(dates[1], dates[2], by = "day")
+      ) |>
+        dplyr::left_join(
+          data |>
+            dplyr::select(
+              "aqs_site_id", "date", "status",
+              "computed_daily_avg_ug_m3", "computed_daily_max_ug_m3",
+              "valid_hours"
+            ),
+          by = c("aqs_site_id", "date")
+        ) |>
+        dplyr::left_join(
+          station_index |>
+            dplyr::select(
+              "aqs_site_id", "site_name", "data_source"
+            ),
+          by = "aqs_site_id"
+        ) |>
+        dplyr::mutate(
+          status = dplyr::coalesce(.data$status, "Missing"),
+          site_label = paste0(
+            ifelse(.data$data_source == "TCEQ", "TCEQ · ", "AQMesh · "),
+            .data$site_name
+          ),
+          hover = sprintf(
+            "%s<br>%s<br>%s<br>Average: %s<br>Maximum: %s<br>Valid hours: %s",
+            .data$site_label, .data$date, .data$status,
+            ifelse(
+              is.finite(.data$computed_daily_avg_ug_m3),
+              sprintf("%.1f µg/m³", .data$computed_daily_avg_ug_m3), "missing"
+            ),
+            ifelse(
+              is.finite(.data$computed_daily_max_ug_m3),
+              sprintf("%.1f µg/m³", .data$computed_daily_max_ug_m3), "missing"
+            ),
+            dplyr::coalesce(as.character(.data$valid_hours), "0")
+          )
+        )
+      site_levels <- station_index |>
+        dplyr::arrange(.data$data_source, .data$site_name) |>
+        dplyr::transmute(label = paste0(
+          ifelse(.data$data_source == "TCEQ", "TCEQ · ", "AQMesh · "),
+          .data$site_name
+        )) |>
+        dplyr::pull(.data$label)
+      grid |>
+        dplyr::mutate(
+          status = factor(
+            .data$status,
+            levels = c(
+              "Missing", "Incomplete", "Eligible non-event", "Event span",
+              "Trough day", "Core day"
+            )
+          ),
+          site_label = factor(.data$site_label, levels = rev(site_levels))
+        )
+    })
+
+    output$regional_alignment_plot <- plotly::renderPlotly({
+      data <- regional_alignment_data()
+      shiny::validate(shiny::need(nrow(data), "No daily records in this window."))
+      colors <- c(
+        "Missing" = "#D1D5DB", "Incomplete" = "#9CA3AF",
+        "Eligible non-event" = "#F3F4F6", "Event span" = "#93C5FD",
+        "Trough day" = "#F59E0B", "Core day" = "#B91C1C"
+      )
+      g <- ggplot2::ggplot(
+        data,
+        ggplot2::aes(
+          x = .data$date, y = .data$site_label, fill = .data$status,
+          text = .data$hover
+        )
+      ) +
+        ggplot2::geom_tile() +
+        ggplot2::scale_fill_manual(values = colors, drop = FALSE) +
+        ggplot2::labs(x = "Date", y = NULL, fill = "Daily status") +
+        ggplot2::theme_minimal(base_size = 11) +
+        ggplot2::theme(
+          panel.grid = ggplot2::element_blank(),
+          axis.text.y = ggplot2::element_text(size = 8),
+          legend.position = "top"
+        )
+      p <- plotly::ggplotly(g, tooltip = "text")
+      p <- plotly::layout(p, margin = list(l = 210, r = 20, t = 45, b = 55))
+      tceq_dashboard_plot_config(p)
+    })
+
+    output$regional_reach_plot <- plotly::renderPlotly({
+      reach <- regional_window_reach()
+      shiny::validate(shiny::need(nrow(reach), "No reach summaries in this window."))
+      p <- plotly::plot_ly()
+      p <- plotly::add_lines(
+        p, data = reach, x = ~date, y = ~balanced_participation_percent,
+        name = "Balanced reach", line = list(color = "#16697A", width = 3),
+        text = ~sprintf(
+          "%s<br>Balanced reach: %s<br>Affected: %d of %d<br>%s",
+          date,
+          ifelse(
+            is.finite(balanced_participation_percent),
+            sprintf("%.1f%%", balanced_participation_percent), "unavailable"
+          ), affected_sites, eligible_sites, coverage_label
+        ), hoverinfo = "text"
+      )
+      p <- plotly::add_lines(
+        p, data = reach, x = ~date, y = ~affected_percent_tceq,
+        name = "TCEQ", line = list(color = "#0F766E", dash = "dot"),
+        hoverinfo = "x+y"
+      )
+      p <- plotly::add_lines(
+        p, data = reach, x = ~date, y = ~affected_percent_aqmesh,
+        name = "AQMesh", line = list(color = "#7C3AED", dash = "dot"),
+        hoverinfo = "x+y"
+      )
+      p <- plotly::add_bars(
+        p, data = reach, x = ~date, y = ~event_active_sites,
+        name = "Event-active sites (core + trough)", yaxis = "y2",
+        marker = list(color = "rgba(245, 158, 11, 0.28)"),
+        text = ~sprintf(
+          "%s<br>Event-active sites: %d<br>Core-day sites: %d",
+          date, event_active_sites, affected_sites
+        ), hoverinfo = "text"
+      )
+      p <- plotly::layout(
+        p, xaxis = list(title = "Date"),
+        yaxis = list(title = "Affected eligible sites (%)", range = c(0, 100)),
+        yaxis2 = list(
+          title = "Event-active site count", overlaying = "y", side = "right",
+          rangemode = "tozero", showgrid = FALSE
+        ),
+        barmode = "overlay",
+        legend = list(orientation = "h", x = 0, y = 1.14),
+        margin = list(t = 55, r = 65)
+      )
+      tceq_dashboard_plot_config(p)
+    })
+
+    output$regional_coverage_badge <- shiny::renderUI({
+      peak <- regional_peak()
+      if (is.null(peak) || peak$represented_networks != 1L) return(NULL)
+      shiny::span(
+        class = "single-network-badge",
+        paste0("Single-network coverage · ", peak$coverage_label)
+      )
+    })
+
+    regional_overlap_display <- shiny::reactive({
+      links <- regional_anchor_links()
+      if (is.null(links) || !nrow(links)) return(tibble::tibble())
+      links |>
+        dplyr::transmute(
+          Relationship = dplyr::recode(
+            .data$relationship,
+            shared_core = "Shared core date", span_only = "Span only"
+          ),
+          Network = .data$other_data_source,
+          Site = .data$other_site_name,
+          `Event start` = .data$other_start_date,
+          `Event end` = .data$other_end_date,
+          `Shared core days` = .data$shared_core_days,
+          `Span overlap days` = .data$span_overlap_days,
+          `Start lag days` = .data$start_lag_days,
+          `Distance km` = .data$distance_km,
+          `Peak hourly` = .data$peak_hourly_ug_m3,
+          `Peak daily max` = .data$peak_daily_max_ug_m3,
+          `Highest daily avg` = .data$max_daily_avg_ug_m3,
+          `Coverage warning` = .data$coverage_warning
+        )
+    })
+
+    output$regional_overlap_table <- DT::renderDT({
+      display <- regional_overlap_display()
+      DT::datatable(
+        display, rownames = FALSE, filter = "top", selection = "single",
+        options = list(pageLength = 8, scrollX = TRUE)
+      ) |>
+        DT::formatRound(
+          c("Distance km", "Peak hourly", "Peak daily max", "Highest daily avg"), 1
+        )
+    })
+
+    regional_peak <- shiny::reactive({
+      reach <- regional_window_reach()
+      if (!nrow(reach) || all(!is.finite(reach$balanced_participation_percent))) {
+        return(NULL)
+      }
+      reach[which.max(reach$balanced_participation_percent), , drop = FALSE]
+    })
+    output$regional_kpi_reach <- shiny::renderText({
+      peak <- regional_peak()
+      if (is.null(peak)) "Unavailable" else sprintf(
+        "%.1f%%", peak$balanced_participation_percent
+      )
+    })
+    output$regional_kpi_sites <- shiny::renderText({
+      links <- regional_anchor_links()
+      if (is.null(links) || !nrow(links)) return("0")
+      length(unique(links$other_site_id[links$relationship == "shared_core"]))
+    })
+    output$regional_kpi_date <- shiny::renderText({
+      peak <- regional_peak()
+      if (is.null(peak)) "—" else as.character(peak$date)
+    })
+    output$regional_kpi_coverage <- shiny::renderText({
+      peak <- regional_peak()
+      if (is.null(peak)) "Insufficient" else paste0(
+        peak$affected_sites, " of ", peak$eligible_sites, " · ", peak$coverage_label
+      )
+    })
+
+    regional_hourly_window <- shiny::reactive({
+      dates <- regional_dates()
+      index <- load_regional("hourly_index")
+      years <- seq.int(
+        as.integer(format(dates[1] - 1L, "%Y")),
+        as.integer(format(dates[2] + 1L, "%Y"))
+      )
+      years <- intersect(years, index$years$year)
+      shards <- lapply(years, function(year) load_regional(paste0("hourly_", year)))
+      shards <- Filter(Negate(is.null), shards)
+      if (!length(shards)) return(NULL)
+      list(
+        timestamp_utc = do.call(c, lapply(shards, `[[`, "timestamp_utc")),
+        site_ids = index$site_ids,
+        data_source = index$data_source,
+        values = do.call(rbind, lapply(shards, `[[`, "values"))
+      )
+    })
+
+    regional_frame_sequence <- shiny::reactive({
+      dates <- regional_dates()
+      if (identical(input$regional_metric, "hourly")) {
+        shiny::validate(shiny::need(
+          as.integer(dates[2] - dates[1]) + 1L <= 7L,
+          "Hourly mapping is limited to seven days."
+        ))
+        hourly <- regional_hourly_window()
+        shiny::validate(shiny::need(!is.null(hourly), "No hourly data in this window."))
+        local_dates <- as.Date(format(
+          hourly$timestamp_utc, tz = "America/Chicago", usetz = FALSE
+        ))
+        selected <- which(local_dates >= dates[1] & local_dates <= dates[2])
+        return(hourly$timestamp_utc[head(selected, 168L)])
+      }
+      seq(dates[1], dates[2], by = "day")
+    })
+
+    output$regional_frame_control <- shiny::renderUI({
+      frames <- regional_frame_sequence()
+      if (!length(frames)) return(shiny::helpText("No frames are available."))
+      value <- shiny::isolate(input$regional_frame)
+      if (length(value) != 1L || is.na(value) ||
+          value < 1L || value > length(frames)) value <- 1L
+      interval <- suppressWarnings(as.integer(input$regional_speed))
+      if (length(interval) != 1L || is.na(interval)) interval <- 1000L
+      shiny::sliderInput(
+        "regional_frame", "Animation frame", min = 1L, max = length(frames),
+        value = value, step = 1L,
+        animate = shiny::animationOptions(
+          interval = interval,
+          loop = FALSE, playButton = "Play", pauseButton = "Pause"
+        )
+      )
+    })
+
+    regional_frame_index <- shiny::reactive({
+      frames <- regional_frame_sequence()
+      index <- suppressWarnings(as.integer(input$regional_frame))
+      if (length(index) != 1L || is.na(index) ||
+          index < 1L || index > length(frames)) index <- 1L
+      index
+    })
+
+    regional_frame_values <- function(frame) {
+      metric <- input$regional_metric
+      if (identical(metric, "hourly")) {
+        hourly <- regional_hourly_window()
+        row <- match(as.numeric(frame), as.numeric(hourly$timestamp_utc))
+        values <- if (is.na(row)) rep(NA_real_, length(hourly$site_ids)) else
+          hourly$values[row, ]
+        return(stats::setNames(as.numeric(values), hourly$site_ids))
+      }
+      field <- if (identical(metric, "daily_max")) {
+        "computed_daily_max_ug_m3"
+      } else "computed_daily_avg_ug_m3"
+      data <- regional_daily()
+      data <- data[data$date == as.Date(frame), , drop = FALSE]
+      values <- data[[field]]
+      values[!data$event_eligible] <- NA_real_
+      stats::setNames(values, data$aqs_site_id)
+    }
+
+    regional_surface_key <- shiny::reactive({
+      paste(
+        input$regional_metric, input$regional_map_view,
+        paste(regional_dates(), collapse = ":"), sep = "|"
+      )
+    })
+
+    shiny::observeEvent(input$regional_generate, {
+      frames <- regional_frame_sequence()
+      shiny::validate(shiny::need(length(frames), "No frames are available."))
+      spatial <- regional_spatial()
+      rv$regional_animation <- NULL
+      session$sendCustomMessage(
+        "tceq-set-disabled", list(id = "regional_generate", disabled = TRUE)
+      )
+      shiny::updateActionButton(
+        session, "regional_generate", label = "Generating animation…",
+        icon = shiny::icon("spinner", class = "fa-spin")
+      )
+      on.exit({
+        session$sendCustomMessage(
+          "tceq-set-disabled", list(id = "regional_generate", disabled = FALSE)
+        )
+        shiny::updateActionButton(
+          session, "regional_generate", label = "Generate & play animation",
+          icon = shiny::icon("play")
+        )
+      }, add = TRUE)
+      surfaces <- vector("list", length(frames))
+      shiny::withProgress(message = "Generating regional animation", value = 0, {
+        for (i in seq_along(frames)) {
+          surfaces[[i]] <- pm25_interpolate_surface(
+            regional_frame_values(frames[[i]]), spatial,
+            view = input$regional_map_view
+          )
+          shiny::incProgress(1 / length(frames))
+        }
+      })
+      rv$regional_animation <- list(
+        key = regional_surface_key(), frames = surfaces
+      )
+      shiny::updateSliderInput(session, "regional_frame", value = 1L)
+      if (length(frames) > 1L) {
+        session$onFlushed(function() {
+          session$sendCustomMessage(
+            "pm25-start-animation", list(id = "regional_frame")
+          )
+        }, once = TRUE)
+      }
+      shiny::showNotification(
+        paste(length(frames), "frames ready; playback started."),
+        type = "message", duration = 4
+      )
+    }, ignoreInit = TRUE)
+
+    output$regional_animation_status <- shiny::renderUI({
+      frames <- regional_frame_sequence()
+      cached <- rv$regional_animation
+      ready <- !is.null(cached) &&
+        identical(cached$key, regional_surface_key()) &&
+        length(cached$frames) == length(frames)
+      if (ready) {
+        return(shiny::div(
+          class = "cache-note",
+          paste(
+            length(frames),
+            "frames are cached. Use Play, Pause, or the frame slider to review them."
+          )
+        ))
+      }
+      shiny::div(
+        class = "cache-note",
+        paste(
+          "The current frame is shown now. Generate the",
+          length(frames), "frame animation to cache the sequence and start playback."
+        )
+      )
+    })
+
+    regional_surface <- shiny::reactive({
+      frames <- regional_frame_sequence()
+      shiny::req(length(frames))
+      index <- regional_frame_index()
+      cached <- rv$regional_animation
+      if (!is.null(cached) && identical(cached$key, regional_surface_key()) &&
+          length(cached$frames) >= index) {
+        return(cached$frames[[index]])
+      }
+      pm25_interpolate_surface(
+        regional_frame_values(frames[[index]]), regional_spatial(),
+        view = input$regional_map_view
+      )
+    })
+
+    regional_map_base <- function(network = NULL) {
+      spatial <- regional_spatial()
+      locations <- station_index
+      if (!is.null(network)) {
+        locations <- locations[locations$data_source == network, , drop = FALSE]
+      }
+      map <- leaflet::leaflet(locations) |>
+        leaflet::addTiles(
+          urlTemplate = paste0(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/",
+            "Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+          ),
+          attribution = paste0(
+            "Tiles &copy; Esri, HERE, Garmin, OpenStreetMap contributors, ",
+            "and the GIS user community"
+          ),
+          options = leaflet::tileOptions(maxZoom = 16L)
+        )
+      for (line in split(spatial$boundary_lines, spatial$boundary_lines$group)) {
+        map <- leaflet::addPolylines(
+          map, data = line, lng = ~longitude, lat = ~latitude,
+          color = "#4B5563", weight = 1, opacity = 0.65,
+          options = leaflet::pathOptions(interactive = FALSE)
+        )
+      }
+      map |>
+        leaflet::addCircleMarkers(
+          data = locations, lng = ~longitude, lat = ~latitude,
+          radius = ifelse(locations$data_source == "TCEQ", 7, 4),
+          color = ifelse(locations$data_source == "TCEQ", "#0F766E", "#7C3AED"),
+          fillColor = ifelse(
+            locations$data_source == "TCEQ", "#0F766E", "#7C3AED"
+          ),
+          fillOpacity = 0.9, weight = 2, group = "measurements",
+          label = ~paste(site_name, "·", data_source)
+        ) |>
+        leaflet::fitBounds(
+          spatial$bounds[["west"]], spatial$bounds[["south"]],
+          spatial$bounds[["east"]], spatial$bounds[["north"]]
+        )
+    }
+
+    output$regional_surface_map <- leaflet::renderLeaflet({
+      regional_map_base()
+    })
+    output$regional_tceq_map <- leaflet::renderLeaflet({
+      regional_map_base("TCEQ")
+    })
+    output$regional_aqmesh_map <- leaflet::renderLeaflet({
+      regional_map_base("Dallas AQMesh")
+    })
+
+    regional_surface_payload <- function(surface, view, id) {
+      spatial <- regional_spatial()
+      values <- surface$value
+      supported <- surface$supported
+      upper <- if (identical(view, "Disagreement")) 20 else 50
+      categorical <- NULL
+      adaptive_active <- FALSE
+      if (identical(input$regional_layer, "support_count")) {
+        values <- if (identical(view, "TCEQ")) surface$tceq$nearby_count else
+          if (identical(view, "Dallas AQMesh")) surface$aqmesh$nearby_count else
+            surface$nearby_count
+        supported <- spatial$grid$inside_region
+        upper <- 8
+      } else if (identical(input$regional_layer, "nearest_distance")) {
+        values <- if (identical(view, "TCEQ")) surface$tceq$nearest_m else
+          if (identical(view, "Dallas AQMesh")) surface$aqmesh$nearest_m else
+            surface$nearest_m
+        values <- values / 1000
+        supported <- spatial$grid$inside_region & is.finite(values)
+        upper <- 25
+      } else if (identical(input$regional_layer, "network_contribution")) {
+        values <- if (identical(view, "TCEQ")) {
+          ifelse(surface$tceq$supported, 1, NA_real_)
+        } else if (identical(view, "Dallas AQMesh")) {
+          ifelse(surface$aqmesh$supported, 2, NA_real_)
+        } else match(
+          surface$contribution, c("TCEQ only", "AQMesh only", "Both networks")
+        )
+        supported <- spatial$grid$inside_region & is.finite(values)
+        upper <- 3
+        categorical <- "contribution"
+      } else if (isTRUE(input$regional_adaptive) &&
+                 (is.null(rv$regional_animation) ||
+                    !identical(rv$regional_animation$key, regional_surface_key())) &&
+                 any(is.finite(values))) {
+        upper <- max(10, stats::quantile(values, 0.99, na.rm = TRUE))
+        adaptive_active <- TRUE
+      }
+      values[!supported | !spatial$grid$inside_region] <- NA_real_
+      rows <- length(spatial$y_values)
+      columns <- length(spatial$x_values)
+      canvas <- rep(NA_real_, rows * columns)
+      cell <- (spatial$grid$row - 1L) * columns + spatial$grid$column
+      canvas[cell] <- values
+      sensors <- if (identical(view, "TCEQ")) {
+        "TCEQ"
+      } else if (identical(view, "Dallas AQMesh")) {
+        "Dallas AQMesh"
+      } else c("TCEQ", "Dallas AQMesh")
+      legend <- if (identical(input$regional_layer, "network_contribution")) {
+        list(type = "categorical", title = "Contributing network", sensors = sensors)
+      } else {
+        title <- if (identical(input$regional_layer, "support_count")) {
+          "Nearby valid sensors"
+        } else if (identical(input$regional_layer, "nearest_distance")) {
+          "Nearest valid sensor (km)"
+        } else if (identical(view, "Disagreement")) {
+          "Absolute network difference (µg/m³)"
+        } else "PM2.5 (µg/m³)"
+        high <- if (identical(input$regional_layer, "concentration") &&
+                    !adaptive_active) {
+          paste0(format(round(upper, 1), trim = TRUE), "+")
+        } else format(round(upper, 1), trim = TRUE)
+        list(
+          type = "continuous", title = title, low = "0",
+          mid = format(round(upper / 2, 1), trim = TRUE), high = high,
+          sensors = sensors
+        )
+      }
+      list(
+        id = id, rows = rows, cols = columns, values = canvas,
+        upper = unname(upper), categorical = categorical,
+        bounds = as.list(spatial$bounds), fit = FALSE, legend = legend
+      )
+    }
+
+    update_regional_markers <- function(map_id, values, network = NULL) {
+      locations <- station_index
+      if (!is.null(network)) {
+        locations <- locations[locations$data_source == network, , drop = FALSE]
+      }
+      locations$value <- unname(values[match(locations$aqs_site_id, names(values))])
+      label <- sprintf(
+        "%s · %s<br>PM2.5: %s",
+        htmltools::htmlEscape(locations$site_name),
+        htmltools::htmlEscape(locations$data_source),
+        ifelse(
+          is.finite(locations$value),
+          sprintf("%.1f µg/m³", locations$value), "missing"
+        )
+      )
+      leaflet::leafletProxy(map_id, session = session, data = locations) |>
+        leaflet::clearGroup("measurements") |>
+        leaflet::addCircleMarkers(
+          lng = ~longitude, lat = ~latitude,
+          radius = ifelse(locations$data_source == "TCEQ", 7, 4),
+          color = ifelse(locations$data_source == "TCEQ", "#0F766E", "#7C3AED"),
+          fillColor = ifelse(
+            locations$data_source == "TCEQ", "#0F766E", "#7C3AED"
+          ),
+          fillOpacity = ifelse(is.finite(locations$value), 0.95, 0.28),
+          weight = 2, group = "measurements", label = lapply(label, htmltools::HTML)
+        )
+    }
+
+    shiny::observe({
+      shiny::req(identical(input$dashboard_tabs, "regional"))
+      shiny::req(identical(input$regional_tabs, "Spatial surface"))
+      surface <- regional_surface()
+      frames <- regional_frame_sequence()
+      values <- regional_frame_values(frames[[regional_frame_index()]])
+      if (isTRUE(input$regional_compare)) {
+        tceq_surface <- surface
+        tceq_surface$value <- surface$tceq$value
+        tceq_surface$supported <- surface$tceq$supported
+        aqmesh_surface <- surface
+        aqmesh_surface$value <- surface$aqmesh$value
+        aqmesh_surface$supported <- surface$aqmesh$supported
+        session$sendCustomMessage(
+          "pm25-surface-frame",
+          regional_surface_payload(tceq_surface, "TCEQ", "regional_tceq_map")
+        )
+        session$sendCustomMessage(
+          "pm25-surface-frame",
+          regional_surface_payload(
+            aqmesh_surface, "Dallas AQMesh", "regional_aqmesh_map"
+          )
+        )
+        update_regional_markers("regional_tceq_map", values, "TCEQ")
+        update_regional_markers(
+          "regional_aqmesh_map", values, "Dallas AQMesh"
+        )
+      } else {
+        session$sendCustomMessage(
+          "pm25-surface-frame",
+          regional_surface_payload(
+            surface, input$regional_map_view, "regional_surface_map"
+          )
+        )
+        update_regional_markers("regional_surface_map", values)
+      }
+    })
+
+    shiny::observeEvent(
+      list(input$regional_tabs, input$regional_compare, input$dashboard_tabs),
+      {
+        session$sendCustomMessage(
+          "pm25-map-resize",
+          c("regional_surface_map", "regional_tceq_map", "regional_aqmesh_map")
+        )
+        session$sendCustomMessage("pm25-sidebar-top", list())
+      }, ignoreInit = TRUE
+    )
+
+    regional_modeled_reach <- shiny::reactive({
+      if (identical(input$regional_metric, "hourly") ||
+          identical(input$regional_map_view, "Disagreement")) return(NA_real_)
+      frame <- as.Date(regional_frame_sequence()[[regional_frame_index()]])
+      data <- regional_daily()
+      data <- data[data$date == frame, , drop = FALSE]
+      mean_values <- data$computed_daily_avg_ug_m3
+      max_values <- data$computed_daily_max_ug_m3
+      mean_values[!data$event_eligible] <- NA_real_
+      max_values[!data$event_eligible] <- NA_real_
+      names(mean_values) <- names(max_values) <- data$aqs_site_id
+      mean_surface <- pm25_interpolate_surface(
+        mean_values, regional_spatial(), input$regional_map_view
+      )
+      max_surface <- pm25_interpolate_surface(
+        max_values, regional_spatial(), input$regional_map_view
+      )
+      pm25_surface_modeled_reach(mean_surface, max_surface)
+    })
+
+    output$regional_surface_summary <- shiny::renderUI({
+      frames <- regional_frame_sequence()
+      frame <- frames[[regional_frame_index()]]
+      surface <- regional_surface()
+      label <- if (identical(input$regional_metric, "hourly")) {
+        paste0(
+          format(frame, "%Y-%m-%d %H:%M %Z", tz = "America/Chicago"),
+          " · ", format(frame, "%Y-%m-%d %H:%M UTC", tz = "UTC")
+        )
+      } else as.character(as.Date(frame))
+      validation <- regional_validation()
+      metric_name <- if (identical(input$regional_metric, "hourly")) {
+        "hourly"
+      } else if (identical(input$regional_metric, "daily_max")) {
+        "computed_daily_max_ug_m3"
+      } else "computed_daily_avg_ug_m3"
+      diagnostic <- validation[validation$metric == metric_name, , drop = FALSE]
+      validation_text <- if (nrow(diagnostic)) paste(vapply(
+        seq_len(nrow(diagnostic)), function(i) {
+          if (diagnostic$observations[i] > 0L && is.finite(diagnostic$mae[i])) {
+            paste0(
+              diagnostic$data_source[i], " MAE ", sprintf("%.1f", diagnostic$mae[i]),
+              " µg/m³ (n=", diagnostic$observations[i], ")"
+            )
+          } else paste0(diagnostic$data_source[i], ": no supported held-out predictions")
+        }, character(1)
+      ), collapse = " · ") else "Validation unavailable for this frame type"
+      modeled <- regional_modeled_reach()
+      shiny::div(
+        class = "regional-summary",
+        shiny::strong(label),
+        shiny::span(paste0(
+          "Valid sensors: ", surface$valid_tceq, " TCEQ + ",
+          surface$valid_aqmesh, " AQMesh"
+        )),
+        shiny::span(paste0(
+          "Supported grid cells: ", format(sum(surface$supported), big.mark = ",")
+        )),
+        if (is.finite(modeled)) shiny::span(sprintf(
+          "Modeled supported area meeting both daily thresholds: %.1f%%", modeled
+        )),
+        if (identical(input$regional_layer, "network_contribution")) shiny::span(
+          "Contribution colors: TCEQ teal · AQMesh purple · both networks amber"
+        ),
+        shiny::span(class = "validation-note", validation_text)
+      )
+    })
+
+    output$regional_cache_status <- shiny::renderUI({
+      if (!isTRUE(regional_available)) {
+        return(shiny::div(
+          class = "cache-alert",
+          "Regional cache missing. Run the one-command dashboard updater."
+        ))
+      }
+      shiny::div(
+        class = "cache-note",
+        "Regional data load only when this section is opened."
+      )
+    })
+
+    output$download_regional_reach <- shiny::downloadHandler(
+      filename = function() paste0(
+        "dfw_pm25_regional_reach_", regional_dates()[1], "_",
+        regional_dates()[2], ".csv"
+      ),
+      content = function(file) readr::write_csv(regional_window_reach(), file, na = "")
+    )
+    output$download_regional_overlap <- shiny::downloadHandler(
+      filename = function() paste0(
+        gsub("[^A-Za-z0-9_-]", "_", regional_anchor()$event_key),
+        "_overlaps.csv"
+      ),
+      content = function(file) readr::write_csv(regional_anchor_links(), file, na = "")
+    )
+    output$download_regional_grid <- shiny::downloadHandler(
+      filename = function() {
+        frame <- regional_frame_sequence()[[regional_frame_index()]]
+        stamp <- if (inherits(frame, "POSIXt")) {
+          format(frame, "%Y%m%dT%H%MZ", tz = "UTC")
+        } else as.character(as.Date(frame))
+        name <- paste0("dfw_pm25_grid_", input$regional_map_view, "_", stamp, ".csv")
+        gsub("[^A-Za-z0-9_.-]", "_", name)
+      },
+      content = function(file) {
+        surface <- regional_surface()
+        spatial <- regional_spatial()
+        frame <- regional_frame_sequence()[[regional_frame_index()]]
+        grid <- tibble::tibble(
+          frame_utc = if (inherits(frame, "POSIXt")) {
+            format(frame, "%Y-%m-%d %H:%M:%S UTC", tz = "UTC")
+          } else paste0(as.Date(frame), " (daily Central-date aggregate)"),
+          metric = input$regional_metric,
+          surface_view = input$regional_map_view,
+          longitude = spatial$grid$longitude,
+          latitude = spatial$grid$latitude,
+          inside_region = spatial$grid$inside_region,
+          supported = surface$supported,
+          interpolated_pm25_ug_m3 = surface$value,
+          tceq_pm25_ug_m3 = surface$tceq$value,
+          aqmesh_pm25_ug_m3 = surface$aqmesh$value,
+          absolute_network_disagreement = surface$disagreement,
+          nearby_sensor_count = surface$nearby_count,
+          nearest_sensor_km = surface$nearest_m / 1000,
+          network_contribution = surface$contribution
+        ) |>
+          dplyr::filter(.data$inside_region)
+        readr::write_csv(grid, file, na = "")
+      }
+    )
 
     output$download_hourly <- shiny::downloadHandler(
       filename = function() paste0(
