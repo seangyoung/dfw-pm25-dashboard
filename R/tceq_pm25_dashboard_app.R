@@ -82,7 +82,8 @@ tceq_dashboard_event_table <- function(events) {
     return(tibble::tibble(
       Event = character(), Type = character(), Start = character(), End = character(),
       `Hours / days` = character(), `Peak hourly` = double(),
-      `Peak daily max` = double(), `Highest daily avg` = double(),
+      `Peak daily max` = double(), `Lowest core median` = double(),
+      `Lowest core IQR` = double(),
       `QA note` = character()
     ))
   }
@@ -110,7 +111,8 @@ tceq_dashboard_event_table <- function(events) {
       ),
       `Peak hourly` = round(.data$peak_hourly_ug_m3, 1),
       `Peak daily max` = round(.data$peak_daily_max_ug_m3, 1),
-      `Highest daily avg` = round(.data$max_daily_avg_ug_m3, 1),
+      `Lowest core median` = round(.data$min_core_daily_median_ug_m3, 1),
+      `Lowest core IQR` = round(.data$min_core_daily_iqr_ug_m3, 1),
       `QA note` = dplyr::case_when(
         .data$data_source == "Dallas AQMesh" ~
           "Non-regulatory Dallas AQMesh screening data",
@@ -703,7 +705,10 @@ tceq_dashboard_server <- function(
           order = list(list(2, "desc"))
         )
       ) |>
-        DT::formatRound(c("Peak hourly", "Peak daily max", "Highest daily avg"), 1)
+        DT::formatRound(
+          c("Peak hourly", "Peak daily max", "Lowest core median", "Lowest core IQR"),
+          1
+        )
     })
 
     output$event_annual_plot <- plotly::renderPlotly({
@@ -778,7 +783,10 @@ tceq_dashboard_server <- function(
               if (event$duration_hours == 1L) "hour" else "hours"
             )
           } else {
-            paste(event$start_date, "to", event$end_date, "·", event$span_days, "days")
+            paste(
+              event$start_date, "to", event$end_date, "·", event$span_days, "days ·",
+              "core-day max ≥25, median ≥15, IQR ≥10 µg/m³"
+            )
           }
         ),
         if (event$parameter_fallback) {
@@ -878,9 +886,10 @@ tceq_dashboard_server <- function(
           list(
             x = tceq_lstd_datetime(day$date, 12L), y = 1.02, xref = "x", yref = "paper",
             text = sprintf(
-              "%s<br>max %.1f · avg %.1f · n=%d",
+              "%s<br>max %.1f · median %.1f · IQR %.1f · n=%d",
               format(day$date, "%b %d"), day$computed_daily_max_ug_m3,
-              day$computed_daily_avg_ug_m3, day$valid_hours
+              day$computed_daily_median_ug_m3, day$computed_daily_iqr_ug_m3,
+              day$valid_hours
             ), showarrow = FALSE, font = list(size = 10)
           )
         })
@@ -1290,6 +1299,7 @@ tceq_dashboard_server <- function(
             dplyr::select(
               "aqs_site_id", "date", "status",
               "computed_daily_avg_ug_m3", "computed_daily_max_ug_m3",
+              "computed_daily_median_ug_m3", "computed_daily_iqr_ug_m3",
               "valid_hours"
             ),
           by = c("aqs_site_id", "date")
@@ -1308,7 +1318,10 @@ tceq_dashboard_server <- function(
             .data$site_name
           ),
           hover = sprintf(
-            "%s<br>%s<br>%s<br>Average: %s<br>Maximum: %s<br>Valid hours: %s",
+            paste0(
+              "%s<br>%s<br>%s<br>Average: %s<br>Maximum: %s",
+              "<br>Median: %s<br>IQR: %s<br>Valid hours: %s"
+            ),
             .data$site_label, .data$date, .data$status,
             ifelse(
               is.finite(.data$computed_daily_avg_ug_m3),
@@ -1317,6 +1330,14 @@ tceq_dashboard_server <- function(
             ifelse(
               is.finite(.data$computed_daily_max_ug_m3),
               sprintf("%.1f µg/m³", .data$computed_daily_max_ug_m3), "missing"
+            ),
+            ifelse(
+              is.finite(.data$computed_daily_median_ug_m3),
+              sprintf("%.1f µg/m³", .data$computed_daily_median_ug_m3), "missing"
+            ),
+            ifelse(
+              is.finite(.data$computed_daily_iqr_ug_m3),
+              sprintf("%.1f µg/m³", .data$computed_daily_iqr_ug_m3), "missing"
             ),
             dplyr::coalesce(as.character(.data$valid_hours), "0")
           )
@@ -1447,7 +1468,8 @@ tceq_dashboard_server <- function(
           `Distance km` = .data$distance_km,
           `Peak hourly` = .data$peak_hourly_ug_m3,
           `Peak daily max` = .data$peak_daily_max_ug_m3,
-          `Highest daily avg` = .data$max_daily_avg_ug_m3,
+          `Lowest core median` = .data$min_core_daily_median_ug_m3,
+          `Lowest core IQR` = .data$min_core_daily_iqr_ug_m3,
           `Coverage warning` = .data$coverage_warning
         )
     })
@@ -1459,7 +1481,10 @@ tceq_dashboard_server <- function(
         options = list(pageLength = 8, scrollX = TRUE)
       ) |>
         DT::formatRound(
-          c("Distance km", "Peak hourly", "Peak daily max", "Highest daily avg"), 1
+          c(
+            "Distance km", "Peak hourly", "Peak daily max",
+            "Lowest core median", "Lowest core IQR"
+          ), 1
         )
     })
 
@@ -1880,18 +1905,23 @@ tceq_dashboard_server <- function(
       frame <- as.Date(regional_frame_sequence()[[regional_frame_index()]])
       data <- regional_daily()
       data <- data[data$date == frame, , drop = FALSE]
-      mean_values <- data$computed_daily_avg_ug_m3
       max_values <- data$computed_daily_max_ug_m3
-      mean_values[!data$event_eligible] <- NA_real_
+      median_values <- data$computed_daily_median_ug_m3
+      iqr_values <- data$computed_daily_iqr_ug_m3
       max_values[!data$event_eligible] <- NA_real_
-      names(mean_values) <- names(max_values) <- data$aqs_site_id
-      mean_surface <- pm25_interpolate_surface(
-        mean_values, regional_spatial(), input$regional_map_view
-      )
+      median_values[!data$event_eligible] <- NA_real_
+      iqr_values[!data$event_eligible] <- NA_real_
+      names(max_values) <- names(median_values) <- names(iqr_values) <- data$aqs_site_id
       max_surface <- pm25_interpolate_surface(
         max_values, regional_spatial(), input$regional_map_view
       )
-      pm25_surface_modeled_reach(mean_surface, max_surface)
+      median_surface <- pm25_interpolate_surface(
+        median_values, regional_spatial(), input$regional_map_view
+      )
+      iqr_surface <- pm25_interpolate_surface(
+        iqr_values, regional_spatial(), input$regional_map_view
+      )
+      pm25_surface_modeled_reach(max_surface, median_surface, iqr_surface)
     })
 
     output$regional_surface_summary <- shiny::renderUI({
@@ -1933,7 +1963,8 @@ tceq_dashboard_server <- function(
           "Supported grid cells: ", format(sum(surface$supported), big.mark = ",")
         )),
         if (is.finite(modeled)) shiny::span(sprintf(
-          "Modeled supported area meeting both daily thresholds: %.1f%%", modeled
+          "Modeled supported area meeting all three MDPE daily thresholds: %.1f%%",
+          modeled
         )),
         if (identical(input$regional_layer, "network_contribution")) shiny::span(
           "Contribution colors: TCEQ teal · AQMesh purple · both networks amber"

@@ -133,7 +133,7 @@ for (site_id in names(by_site)) {
   metadata <- station_metadata |>
     dplyr::filter(.data$aqs_site_id == site_id)
   bundle <- list(
-    schema_version = 2L,
+    schema_version = 3L,
     metadata = metadata,
     hourly = tibble::as_tibble(hourly),
     daily = tibble::as_tibble(daily),
@@ -180,7 +180,7 @@ atomic_write_csv(station_index, file.path(cache_dir, "station_index.csv"))
 atomic_write_csv(event_index, file.path(cache_dir, "event_index.csv"))
 
 manifest <- list(
-  schema_version = 2L,
+  schema_version = 3L,
   generated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
   raw_data_dir = normalizePath(raw_dir, winslash = "/"),
   raw_manifest_path = normalizePath(raw_manifest_path, winslash = "/"),
@@ -203,7 +203,10 @@ manifest <- list(
     parameter_priority = c("88101", "88502"),
     daily_minimum_valid_hours = 18L,
     short_spike = "Strictly greater than 35 ug/m3 for a maximal run of 1-5 consecutive hours",
-    multi_day = "At least two core days with daily max >25 and mean >20 ug/m3; one eligible trough day may bridge"
+    multi_day = paste(
+      "At least two core days with daily max >=25, median >=15, and IQR >=10 ug/m3;",
+      "one eligible trough day may bridge"
+    )
   ),
   cache_files = list(
     station_index = "station_index.rds",

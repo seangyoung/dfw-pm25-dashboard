@@ -538,6 +538,15 @@ ui <- bslib::page_sidebar(
           )
         ),
         plotly::plotlyOutput("event_plot", height = "560px")
+      ),
+      shiny::p(
+        class = "method-note",
+        paste(
+          "A multi-day particulate event contains at least two core days.",
+          "Each core day has at least 18 valid hours, daily maximum ≥25 µg/m³,",
+          "daily median ≥15 µg/m³, and daily IQR ≥10 µg/m³.",
+          "One adequately observed non-core trough day may bridge core days."
+        )
       )
     ),
     bslib::nav_panel(
@@ -574,7 +583,11 @@ ui <- bslib::page_sidebar(
           ),
           shiny::p(
             class = "method-note",
-            "Balanced reach averages within-network percentages when at least three sites in a network are eligible. It is descriptive and is not a regulatory determination."
+            paste(
+              "Balanced reach averages within-network percentages when at least three sites in a network are eligible.",
+              "An affected site-day meets the MDPE core criteria: maximum ≥25, median ≥15, and IQR ≥10 µg/m³.",
+              "It is descriptive and is not a regulatory determination."
+            )
           )
         ),
         bslib::nav_panel(

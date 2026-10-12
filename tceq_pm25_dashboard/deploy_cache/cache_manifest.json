@@ -1,6 +1,6 @@
 {
-  "schema_version": 4,
-  "generated_at_utc": "2026-10-08 16:05:55 UTC",
+  "schema_version": 5,
+  "generated_at_utc": "2026-10-12 14:33:07 UTC",
   "data_sources": ["TCEQ", "Dallas AQMesh"],
   "source_counts": {
     "Dallas AQMesh": 32,
@@ -9,13 +9,13 @@
   "station_count": 49,
   "hourly_composite_rows": 2439456,
   "valid_hourly_values": 2123836,
-  "event_count": 3846,
+  "event_count": 3546,
   "first_date": "2000-01-01",
   "last_date": "2026-09-30",
   "preparation_command": "Rscript --vanilla scripts/08i_update_dfw_pm25_dashboard.R",
   "tceq": {
     "source_cache": "Not included in the deployment bundle",
-    "cache_manifest_sha256": "3d1b54d489073cc1dea8de8bcf2f6c0462ff62a341e04b08b0e5adbac1391260",
+    "cache_manifest_sha256": "5e926069c2f74dc34e69315a83b86ce2fe7ee1861a355b561c1953ecda7112f9",
     "raw_manifest_sha256": "9180fca065933ed683708e05d0c931a9da80da0854abc22ecdd937f25f077a05",
     "parameter_priority": ["88101", "88502"]
   },
@@ -30,7 +30,7 @@
   "regional_analysis": {
     "boundary": "NCTCOG 16-county region",
     "boundary_source_url": "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_county_500k.zip",
-    "boundary_retrieved_at_utc": "2026-10-08 16:05:40 UTC",
+    "boundary_retrieved_at_utc": "2026-10-12 14:32:52 UTC",
     "analysis_crs": 3083,
     "grid_resolution_m": 4000,
     "idw_power": 2,
@@ -101,11 +101,11 @@
       "spatial_validation": "spatial_validation.rds"
     },
     "file_sha256": {
-      "regional_daily.rds": "1ba4837640aa2ea9b1e5afc977fa7c8e956210f137af95c112573221d0e5a46b",
-      "regional_reach.rds": "5091e72f1dc0f7cae972d1bc93f2c7a1bffcc769189316f86a2ffc39e9a7cfe1",
-      "regional_event_links.rds": "b340d86a583ac3f24686551a778397692e8802cec795d76d3f74a89660d32a4e",
+      "regional_daily.rds": "4ad571fd7551ebd45a7d279f788ee97e08def0c1e9e8d1d8499f9416e4eff6fa",
+      "regional_reach.rds": "ab322fd8687846e58e8ba8e188b521574899644bc9c86215f329e0b9287220f4",
+      "regional_event_links.rds": "25c1970974395c5f1ab47404bc2b39a3948937b26b40b9bc858042de53cb91ad",
       "regional_hourly_index.rds": "5af5264bb8b5dd0e639ad1413c4ad6d0465515966c607fca4b7e8b089a941a4b",
-      "spatial_support.rds": "ee94331168bf96939c4be2a3c73140f6e9730ca9aaa6ad8fa06e22d3d061ca48",
+      "spatial_support.rds": "2b19bf0e9f69c1cac4b7dc44fc5aa13c820186a435d815d0a2d3f9d22d355413",
       "spatial_validation.rds": "b49a3f79c5ffad57689cbb231242ae825bd55f93892de7be30dc29defae1287d",
       "regional_hourly/year_2000.rds": "a87648f14a00c1d4d34a1a4571e658305f24357be00f1b83c6bbbb015d0ade1d",
       "regional_hourly/year_2001.rds": "e7771729bee19d7d8fb0ecfe9680861514af5f9ea2324fe6a1239d5d49130bf8",
@@ -139,7 +139,7 @@
   "algorithms": {
     "daily_minimum_valid_hours": 18,
     "short_spike": "Strictly greater than 35 ug/m3 for a maximal run of 1-5 consecutive UTC hours",
-    "multi_day": "At least two core days with daily max >25 and mean >20 ug/m3; one eligible trough day may bridge",
+    "multi_day": "At least two core days with daily max >=25, median >=15, and IQR >=10 ug/m3; one eligible trough day may bridge",
     "dallas_dst_display": "Events use UTC continuity. Repeated fall-back display hours are represented by their median in the 24-column heatmap and retained separately in hourly_event."
   },
   "cache_files": {

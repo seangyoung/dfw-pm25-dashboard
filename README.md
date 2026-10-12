@@ -22,9 +22,11 @@ network, minimum duration, and the number of sites sharing a core event date.
 
 - A **short-term spike** is a maximal run of one to five consecutive hourly
   composite values strictly above 35 µg/m³.
-- A **multi-day particulate event** has at least two core days with computed
-  daily maximum above 25 µg/m³ and computed daily mean above 20 µg/m³. One
-  adequately observed intervening trough day may be included.
+- A **multi-day particulate event** has at least two core days. Each core day
+  has at least 18 valid hourly observations, computed daily maximum greater
+  than or equal to 25 µg/m³, computed daily median greater than or equal to
+  15 µg/m³, and computed daily interquartile range (IQR) greater than or equal
+  to 10 µg/m³. One adequately observed intervening trough day may be included.
 
 These are exploratory screening definitions, not regulatory exceedance
 determinations or evidence of a particular emissions source.

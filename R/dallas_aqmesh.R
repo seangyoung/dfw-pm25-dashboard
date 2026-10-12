@@ -387,6 +387,10 @@ pm25_build_computed_daily <- function(hourly, minimum_valid_hours = 18L) {
       represented_hours = dplyr::n_distinct(.data$hour),
       computed_daily_max_ug_m3 = tceq_safe_max(.data$composite_pm25_ug_m3),
       computed_daily_avg_ug_m3 = tceq_safe_mean(.data$composite_pm25_ug_m3),
+      computed_daily_median_ug_m3 = tceq_safe_median(.data$composite_pm25_ug_m3),
+      computed_daily_q25_ug_m3 = tceq_safe_quantile(.data$composite_pm25_ug_m3, 0.25),
+      computed_daily_q75_ug_m3 = tceq_safe_quantile(.data$composite_pm25_ug_m3, 0.75),
+      computed_daily_iqr_ug_m3 = tceq_safe_iqr(.data$composite_pm25_ug_m3),
       computed_daily_std_ug_m3 = if (sum(is.finite(.data$composite_pm25_ug_m3)) > 1L) {
         stats::sd(.data$composite_pm25_ug_m3, na.rm = TRUE)
       } else NA_real_,

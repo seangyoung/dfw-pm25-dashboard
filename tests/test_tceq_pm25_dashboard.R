@@ -118,24 +118,42 @@ midnight_spike <- tceq_detect_short_spikes(
 )
 stopifnot(nrow(midnight_spike) == 1L, midnight_spike$span_days == 2L)
 
-make_daily_test <- function(maximum, average, valid = rep(24L, length(maximum)),
+daily_metric_values <- c(5, 8, 10, 12, 14, 15, 15, 15, 15, 15, 15, 15,
+                         15, 15, 15, 15, 15, 16, 18, 20, 22, 24, 25, 30)
+daily_metric_test <- pm25_build_computed_daily(make_hourly_test(daily_metric_values))
+stopifnot(
+  daily_metric_test$computed_daily_max_ug_m3 == max(daily_metric_values),
+  daily_metric_test$computed_daily_median_ug_m3 == stats::median(daily_metric_values),
+  daily_metric_test$computed_daily_q25_ug_m3 ==
+    as.numeric(stats::quantile(daily_metric_values, 0.25)),
+  daily_metric_test$computed_daily_q75_ug_m3 ==
+    as.numeric(stats::quantile(daily_metric_values, 0.75)),
+  daily_metric_test$computed_daily_iqr_ug_m3 == stats::IQR(daily_metric_values)
+)
+
+make_daily_test <- function(maximum, median, iqr, valid = rep(24L, length(maximum)),
                             start = as.Date("2024-01-01")) {
   dates <- start + seq_along(maximum) - 1L
   daily <- tibble::tibble(
     aqs_site_id = "test_site", date = dates, valid_hours = valid,
     represented_hours = 24L, computed_daily_max_ug_m3 = maximum,
-    computed_daily_avg_ug_m3 = average, computed_daily_std_ug_m3 = 1,
+    computed_daily_avg_ug_m3 = median,
+    computed_daily_median_ug_m3 = median,
+    computed_daily_q25_ug_m3 = median - iqr / 2,
+    computed_daily_q75_ug_m3 = median + iqr / 2,
+    computed_daily_iqr_ug_m3 = iqr,
+    computed_daily_std_ug_m3 = 1,
     qa_fallback_hours = 0L, parameter_fallback_hours = 0L,
     contributing_records = valid,
     event_eligible = valid >= 18L
   )
-  hourly <- purrr::map2_dfr(dates, average, function(date, value) {
+  hourly <- purrr::map2_dfr(dates, median, function(date, value) {
     make_hourly_test(rep(value, 24), paste(date, "00:00:00"))
   })
   list(daily = daily, hourly = hourly)
 }
 
-bridged <- make_daily_test(c(30, 18, 31), c(21, 15, 22))
+bridged <- make_daily_test(c(25, 18, 31), c(15, 10, 16), c(10, 5, 11))
 bridged_events <- tceq_detect_multiday_events(bridged$daily, bridged$hourly)
 stopifnot(
   nrow(bridged_events) == 1L,
@@ -143,17 +161,31 @@ stopifnot(
   bridged_events$trough_dates == "2024-01-02"
 )
 
-two_troughs <- make_daily_test(c(30, 18, 19, 31), c(21, 15, 16, 22))
+two_troughs <- make_daily_test(
+  c(25, 18, 19, 31), c(15, 10, 11, 16), c(10, 5, 6, 11)
+)
 stopifnot(nrow(tceq_detect_multiday_events(two_troughs$daily, two_troughs$hourly)) == 0L)
-incomplete_trough <- make_daily_test(c(30, 18, 31), c(21, 15, 22), c(24L, 17L, 24L))
+incomplete_trough <- make_daily_test(
+  c(25, 18, 31), c(15, 10, 16), c(10, 5, 11), c(24L, 17L, 24L)
+)
 stopifnot(nrow(tceq_detect_multiday_events(
   incomplete_trough$daily, incomplete_trough$hourly
 )) == 0L)
-threshold_equal <- make_daily_test(c(25, 26), c(21, 20))
+threshold_equal <- make_daily_test(c(25, 25), c(15, 15), c(10, 10))
 stopifnot(nrow(tceq_detect_multiday_events(
   threshold_equal$daily, threshold_equal$hourly
-)) == 0L)
-exact_coverage <- make_daily_test(c(30, 31), c(21, 22), c(18L, 18L))
+)) == 1L)
+below_max <- make_daily_test(c(24.9, 30), c(15, 16), c(10, 11))
+below_median <- make_daily_test(c(25, 30), c(14.9, 16), c(10, 11))
+below_iqr <- make_daily_test(c(25, 30), c(15, 16), c(9.9, 11))
+stopifnot(
+  nrow(tceq_detect_multiday_events(below_max$daily, below_max$hourly)) == 0L,
+  nrow(tceq_detect_multiday_events(below_median$daily, below_median$hourly)) == 0L,
+  nrow(tceq_detect_multiday_events(below_iqr$daily, below_iqr$hourly)) == 0L
+)
+exact_coverage <- make_daily_test(
+  c(30, 31), c(15, 16), c(10, 11), c(18L, 18L)
+)
 stopifnot(nrow(tceq_detect_multiday_events(
   exact_coverage$daily, exact_coverage$hourly
 )) == 1L)
@@ -199,6 +231,8 @@ regional_event_fixture <- tibble::tibble(
   trough_dates = c("2024-01-03", "2024-01-03", "2024-01-06"),
   peak_hourly_ug_m3 = c(40, 42, 44), peak_daily_max_ug_m3 = c(35, 36, 37),
   max_daily_avg_ug_m3 = c(22, 23, 24), coverage_warning = FALSE,
+  min_core_daily_median_ug_m3 = c(15, 16, 17),
+  min_core_daily_iqr_ug_m3 = c(10, 11, 12),
   qa_fallback = FALSE, parameter_fallback = FALSE
 )
 regional_link_test <- pm25_build_regional_event_links(
@@ -265,6 +299,12 @@ insufficient_surface <- pm25_interpolate_surface(
   c(t1 = 10, t2 = 20), regional_spatial_fixture, view = "TCEQ"
 )
 stopifnot(!insufficient_surface$supported, is.na(insufficient_surface$value))
+modeled_reach_test <- pm25_surface_modeled_reach(
+  list(value = c(25, 30, 24), supported = rep(TRUE, 3)),
+  list(value = c(15, 16, 20), supported = rep(TRUE, 3)),
+  list(value = c(10, 9, 12), supported = rep(TRUE, 3))
+)
+stopifnot(abs(modeled_reach_test - 100 / 3) < 1e-8)
 
 validation_daily_fixture <- tibble::tibble(
   aqs_site_id = regional_spatial_fixture$station_ids,
@@ -376,6 +416,10 @@ make_server_bundle <- function(site_id, hourly) {
       represented_hours = dplyr::n(),
       computed_daily_max_ug_m3 = max(.data$composite_pm25_ug_m3),
       computed_daily_avg_ug_m3 = mean(.data$composite_pm25_ug_m3),
+      computed_daily_median_ug_m3 = stats::median(.data$composite_pm25_ug_m3),
+      computed_daily_q25_ug_m3 = stats::quantile(.data$composite_pm25_ug_m3, 0.25),
+      computed_daily_q75_ug_m3 = stats::quantile(.data$composite_pm25_ug_m3, 0.75),
+      computed_daily_iqr_ug_m3 = stats::IQR(.data$composite_pm25_ug_m3),
       computed_daily_std_ug_m3 = stats::sd(.data$composite_pm25_ug_m3),
       qa_fallback_hours = 0L, contributing_records = dplyr::n(),
       event_eligible = TRUE, .groups = "drop"
@@ -464,7 +508,9 @@ regional_server_daily <- dplyr::bind_rows(
     aqs_site_id = "site_a", date = as.Date(c("2024-01-01", "2024-01-02")),
     data_source = "TCEQ", valid_hours = 24L,
     computed_daily_max_ug_m3 = c(42, 38),
-    computed_daily_avg_ug_m3 = c(24, 22), qa_fallback_hours = 0L,
+    computed_daily_avg_ug_m3 = c(24, 22),
+    computed_daily_median_ug_m3 = c(18, 17),
+    computed_daily_iqr_ug_m3 = c(12, 11), qa_fallback_hours = 0L,
     parameter_fallback_hours = 0L, event_eligible = TRUE,
     threshold_core = TRUE, event_active = TRUE, event_core = TRUE,
     event_trough = FALSE
@@ -473,7 +519,9 @@ regional_server_daily <- dplyr::bind_rows(
     aqs_site_id = "site_b", date = as.Date(c("2024-01-01", "2024-01-02")),
     data_source = "Dallas AQMesh", valid_hours = 24L,
     computed_daily_max_ug_m3 = c(20, 18),
-    computed_daily_avg_ug_m3 = c(12, 11), qa_fallback_hours = 0L,
+    computed_daily_avg_ug_m3 = c(12, 11),
+    computed_daily_median_ug_m3 = c(12, 11),
+    computed_daily_iqr_ug_m3 = c(5, 4), qa_fallback_hours = 0L,
     parameter_fallback_hours = 0L, event_eligible = TRUE,
     threshold_core = FALSE, event_active = FALSE, event_core = FALSE,
     event_trough = FALSE
@@ -489,6 +537,7 @@ regional_server_links <- tibble::tibble(
   span_overlap_days = 1L, start_lag_days = 1L, distance_km = 12,
   peak_hourly_ug_m3 = 40, peak_daily_max_ug_m3 = 35,
   max_daily_avg_ug_m3 = 22, coverage_warning = "", qa_fallback = FALSE,
+  min_core_daily_median_ug_m3 = 16, min_core_daily_iqr_ug_m3 = 11,
   parameter_fallback = FALSE
 )
 regional_loader <- function(name) switch(

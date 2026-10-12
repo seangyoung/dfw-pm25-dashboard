@@ -133,7 +133,7 @@ for (site_id in tceq_stations$aqs_site_id) {
         TRUE ~ "not_reported"
       )
     )
-  bundle$schema_version <- 3L
+  bundle$schema_version <- 4L
   output_path <- file.path(cache_dir, "sites", tceq_site_cache_filename(site_id))
   atomic_save_rds(bundle, output_path)
   row <- tceq_stations[tceq_stations$aqs_site_id == site_id, , drop = FALSE]
@@ -195,7 +195,7 @@ for (site_id in field_ids) {
     ))) |>
     dplyr::mutate(data_source = "Dallas AQMesh")
   bundle <- list(
-    schema_version = 3L,
+    schema_version = 4L,
     metadata = metadata,
     hourly = tibble::as_tibble(hourly),
     daily = tibble::as_tibble(daily),
@@ -314,7 +314,7 @@ regional_files <- c(
 regional_hourly_files <- regional_hourly$index$years$file
 all_regional_files <- c(regional_files, regional_hourly_files)
 manifest <- list(
-  schema_version = 4L,
+  schema_version = 5L,
   generated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
   data_sources = c("TCEQ", "Dallas AQMesh"),
   source_counts = as.list(table(station_index$data_source)),
@@ -365,7 +365,10 @@ manifest <- list(
   algorithms = list(
     daily_minimum_valid_hours = 18L,
     short_spike = "Strictly greater than 35 ug/m3 for a maximal run of 1-5 consecutive UTC hours",
-    multi_day = "At least two core days with daily max >25 and mean >20 ug/m3; one eligible trough day may bridge",
+    multi_day = paste(
+      "At least two core days with daily max >=25, median >=15, and IQR >=10 ug/m3;",
+      "one eligible trough day may bridge"
+    ),
     dallas_dst_display = paste(
       "Events use UTC continuity. Repeated fall-back display hours are represented",
       "by their median in the 24-column heatmap and retained separately in hourly_event."

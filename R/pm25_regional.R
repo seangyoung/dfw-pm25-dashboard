@@ -71,15 +71,19 @@ pm25_build_regional_daily <- function(daily_index, event_index, station_index) {
       event_eligible = .data$valid_hours >= 18L,
       threshold_core = .data$event_eligible &
         is.finite(.data$computed_daily_max_ug_m3) &
-        is.finite(.data$computed_daily_avg_ug_m3) &
-        .data$computed_daily_max_ug_m3 > 25 &
-        .data$computed_daily_avg_ug_m3 > 20
+        is.finite(.data$computed_daily_median_ug_m3) &
+        is.finite(.data$computed_daily_iqr_ug_m3) &
+        .data$computed_daily_max_ug_m3 >= 25 &
+        .data$computed_daily_median_ug_m3 >= 15 &
+        .data$computed_daily_iqr_ug_m3 >= 10
     ) |>
     dplyr::select(dplyr::any_of(
       c(
         "aqs_site_id", "date", "data_source", "valid_hours",
         "represented_hours", "computed_daily_max_ug_m3",
-        "computed_daily_avg_ug_m3", "computed_daily_std_ug_m3",
+        "computed_daily_avg_ug_m3", "computed_daily_median_ug_m3",
+        "computed_daily_q25_ug_m3", "computed_daily_q75_ug_m3",
+        "computed_daily_iqr_ug_m3", "computed_daily_std_ug_m3",
         "qa_fallback_hours", "parameter_fallback_hours",
         "contributing_records", "event_eligible", "threshold_core"
       )
@@ -95,6 +99,7 @@ pm25_build_regional_daily <- function(daily_index, event_index, station_index) {
     dplyr::select(dplyr::any_of(c(
       "aqs_site_id", "date", "data_source", "valid_hours",
       "computed_daily_max_ug_m3", "computed_daily_avg_ug_m3",
+      "computed_daily_median_ug_m3", "computed_daily_iqr_ug_m3",
       "qa_fallback_hours", "parameter_fallback_hours", "event_eligible",
       "threshold_core", "event_active", "event_core", "event_trough"
     ))) |>
@@ -252,6 +257,8 @@ pm25_build_regional_event_links <- function(event_index, station_index) {
     peak_hourly_ug_m3 = other$peak_hourly_ug_m3,
     peak_daily_max_ug_m3 = other$peak_daily_max_ug_m3,
     max_daily_avg_ug_m3 = other$max_daily_avg_ug_m3,
+    min_core_daily_median_ug_m3 = other$min_core_daily_median_ug_m3,
+    min_core_daily_iqr_ug_m3 = other$min_core_daily_iqr_ug_m3,
     coverage_warning = other$coverage_warning,
     qa_fallback = other$qa_fallback,
     parameter_fallback = other$parameter_fallback
@@ -549,11 +556,13 @@ pm25_interpolate_surface <- function(
   )
 }
 
-pm25_surface_modeled_reach <- function(mean_surface, max_surface) {
-  supported <- mean_surface$supported & max_surface$supported
+pm25_surface_modeled_reach <- function(max_surface, median_surface, iqr_surface) {
+  supported <- max_surface$supported & median_surface$supported & iqr_surface$supported
   if (!any(supported)) return(NA_real_)
   100 * mean(
-    mean_surface$value[supported] > 20 & max_surface$value[supported] > 25,
+    max_surface$value[supported] >= 25 &
+      median_surface$value[supported] >= 15 &
+      iqr_surface$value[supported] >= 10,
     na.rm = TRUE
   )
 }

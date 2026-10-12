@@ -44,6 +44,20 @@ tceq_safe_median <- function(x) {
   if (any(is.finite(x))) stats::median(x, na.rm = TRUE) else NA_real_
 }
 
+tceq_safe_quantile <- function(x, probability) {
+  x <- as.numeric(x)
+  x <- x[is.finite(x)]
+  if (length(x)) {
+    as.numeric(stats::quantile(x, probability, names = FALSE, type = 7))
+  } else NA_real_
+}
+
+tceq_safe_iqr <- function(x) {
+  x <- as.numeric(x)
+  x <- x[is.finite(x)]
+  if (length(x)) stats::IQR(x, type = 7) else NA_real_
+}
+
 tceq_lstd_datetime <- function(date, hour) {
   # UTC deliberately prevents a browser or operating system from shifting the
   # clock values for daylight saving time. The values are labeled LST in UI.
@@ -306,6 +320,10 @@ tceq_build_daily_summary <- function(hourly, raw, minimum_valid_hours = 18L) {
       represented_hours = dplyr::n_distinct(.data$hour),
       computed_daily_max_ug_m3 = tceq_safe_max(.data$composite_pm25_ug_m3),
       computed_daily_avg_ug_m3 = tceq_safe_mean(.data$composite_pm25_ug_m3),
+      computed_daily_median_ug_m3 = tceq_safe_median(.data$composite_pm25_ug_m3),
+      computed_daily_q25_ug_m3 = tceq_safe_quantile(.data$composite_pm25_ug_m3, 0.25),
+      computed_daily_q75_ug_m3 = tceq_safe_quantile(.data$composite_pm25_ug_m3, 0.75),
+      computed_daily_iqr_ug_m3 = tceq_safe_iqr(.data$composite_pm25_ug_m3),
       computed_daily_std_ug_m3 = if (sum(is.finite(.data$composite_pm25_ug_m3)) > 1L) {
         stats::sd(.data$composite_pm25_ug_m3, na.rm = TRUE)
       } else NA_real_,
@@ -366,6 +384,7 @@ tceq_empty_events <- function() {
     event_year = integer(), duration_hours = integer(), span_days = integer(),
     peak_hourly_ug_m3 = double(), mean_hourly_ug_m3 = double(),
     peak_daily_max_ug_m3 = double(), max_daily_avg_ug_m3 = double(),
+    min_core_daily_median_ug_m3 = double(), min_core_daily_iqr_ug_m3 = double(),
     valid_hours = integer(), contributing_records = integer(), qa_fallback = logical(),
     parameter_fallback = logical(),
     core_dates = character(), trough_dates = character(), coverage_warning = logical(),
@@ -421,6 +440,7 @@ tceq_detect_short_spikes <- function(hourly, threshold = 35, maximum_hours = 5L)
         format(.data$start_lstd, "%Y%m%dT%H", tz = "UTC")
       ),
       peak_daily_max_ug_m3 = NA_real_, max_daily_avg_ug_m3 = NA_real_,
+      min_core_daily_median_ug_m3 = NA_real_, min_core_daily_iqr_ug_m3 = NA_real_,
       core_dates = "", trough_dates = "", coverage_warning = FALSE,
       definition = sprintf("> %.0f ug/m3 for 1-%d consecutive hours", threshold, maximum_hours)
     ) |>
@@ -429,7 +449,8 @@ tceq_detect_short_spikes <- function(hourly, threshold = 35, maximum_hours = 5L)
 }
 
 tceq_detect_multiday_events <- function(
-    daily, hourly, maximum_threshold = 25, average_threshold = 20,
+    daily, hourly, maximum_threshold = 25, median_threshold = 15,
+    iqr_threshold = 10,
     minimum_valid_hours = 18L) {
   require_packages(c("dplyr", "tibble", "tidyr"))
   if (!nrow(daily)) return(tceq_empty_events())
@@ -443,9 +464,11 @@ tceq_detect_multiday_events <- function(
         .data$valid_hours >= minimum_valid_hours,
       core_day = .data$event_eligible &
         is.finite(.data$computed_daily_max_ug_m3) &
-        .data$computed_daily_max_ug_m3 > maximum_threshold &
-        is.finite(.data$computed_daily_avg_ug_m3) &
-        .data$computed_daily_avg_ug_m3 > average_threshold,
+        .data$computed_daily_max_ug_m3 >= maximum_threshold &
+        is.finite(.data$computed_daily_median_ug_m3) &
+        .data$computed_daily_median_ug_m3 >= median_threshold &
+        is.finite(.data$computed_daily_iqr_ug_m3) &
+        .data$computed_daily_iqr_ug_m3 >= iqr_threshold,
       trough_day = .data$event_eligible & !.data$core_day &
         dplyr::lag(.data$core_day, default = FALSE) &
         dplyr::lead(.data$core_day, default = FALSE),
@@ -479,6 +502,12 @@ tceq_detect_multiday_events <- function(
         mean_hourly_ug_m3 = tceq_safe_mean(h$composite_pm25_ug_m3),
         peak_daily_max_ug_m3 = tceq_safe_max(days$computed_daily_max_ug_m3),
         max_daily_avg_ug_m3 = tceq_safe_max(days$computed_daily_avg_ug_m3),
+        min_core_daily_median_ug_m3 = tceq_safe_min(
+          days$computed_daily_median_ug_m3[days$core_day]
+        ),
+        min_core_daily_iqr_ug_m3 = tceq_safe_min(
+          days$computed_daily_iqr_ug_m3[days$core_day]
+        ),
         valid_hours = as.integer(sum(days$valid_hours, na.rm = TRUE)),
         contributing_records = as.integer(sum(h$contributing_records, na.rm = TRUE)),
         qa_fallback = any(h$qa_fallback & is.finite(h$composite_pm25_ug_m3)),
@@ -499,8 +528,11 @@ tceq_detect_multiday_events <- function(
         "_", format(.data$end_date, "%Y%m%d")
       ),
       definition = sprintf(
-        "At least 2 core days: daily max > %.0f and mean > %.0f ug/m3; one eligible trough day may bridge",
-        maximum_threshold, average_threshold
+        paste0(
+          "At least 2 core days: daily max >= %.0f, median >= %.0f, ",
+          "and IQR >= %.0f ug/m3; one eligible trough day may bridge"
+        ),
+        maximum_threshold, median_threshold, iqr_threshold
       )
     ) |>
     dplyr::select(dplyr::all_of(names(tceq_empty_events())))
