@@ -15,7 +15,9 @@ The **Regional analysis** section compares existing multi-day events directly
 across sensors and provides network-balanced reach summaries. Its spatial view
 uses separately calculated TCEQ and AQMesh inverse-distance-weighted surfaces,
 with Combined, network-specific, disagreement, support, and bounded animation
-views. Unsupported areas remain blank. Event filters can narrow anchors by
+views. Concentration surfaces and animation use a fixed 0–30+ µg/m³ color ramp
+by default; static frames may optionally use an adaptive scale. Unsupported
+areas remain blank. Event filters can narrow anchors by
 network, minimum duration, and the number of sites sharing a core event date.
 
 ## Event definitions

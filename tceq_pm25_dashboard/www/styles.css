@@ -317,6 +317,19 @@ body {
   color: var(--pm25-muted);
 }
 
+.pm25-legend-frame {
+  margin-top: 0.55rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--pm25-border);
+  color: var(--pm25-ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.pm25-legend-frame-line + .pm25-legend-frame-line {
+  margin-top: 0.15rem;
+}
+
 @media (max-width: 768px) {
   .app-title small {
     width: 100%;

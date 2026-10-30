@@ -5,6 +5,22 @@ tceq_dashboard_plot_config <- function(plot) {
   )
 }
 
+tceq_dashboard_regional_concentration_upper <- function() 30
+
+tceq_dashboard_regional_frame_labels <- function(frame, metric) {
+  if (identical(metric, "hourly")) {
+    timestamp <- as.POSIXct(frame, origin = "1970-01-01", tz = "UTC")
+    return(c(
+      paste0(
+        "Central: ",
+        format(timestamp, "%Y-%m-%d %H:%M %Z", tz = "America/Chicago")
+      ),
+      paste0("UTC: ", format(timestamp, "%Y-%m-%d %H:%M UTC", tz = "UTC"))
+    ))
+  }
+  paste0("Date: ", as.character(as.Date(frame)))
+}
+
 tceq_dashboard_default_site <- function(station_index) {
   candidates <- station_index[station_index$active %in% TRUE, , drop = FALSE]
   if (!nrow(candidates)) candidates <- station_index
@@ -1745,11 +1761,13 @@ tceq_dashboard_server <- function(
       regional_map_base("Dallas AQMesh")
     })
 
-    regional_surface_payload <- function(surface, view, id) {
+    regional_surface_payload <- function(surface, view, id, frame_labels) {
       spatial <- regional_spatial()
       values <- surface$value
       supported <- surface$supported
-      upper <- if (identical(view, "Disagreement")) 20 else 50
+      upper <- if (identical(view, "Disagreement")) {
+        20
+      } else tceq_dashboard_regional_concentration_upper()
       categorical <- NULL
       adaptive_active <- FALSE
       if (identical(input$regional_layer, "support_count")) {
@@ -1811,9 +1829,10 @@ tceq_dashboard_server <- function(
         list(
           type = "continuous", title = title, low = "0",
           mid = format(round(upper / 2, 1), trim = TRUE), high = high,
-          sensors = sensors
+          sensors = sensors, frame = as.character(frame_labels)
         )
       }
+      if (is.null(legend$frame)) legend$frame <- as.character(frame_labels)
       list(
         id = id, rows = rows, cols = columns, values = canvas,
         upper = unname(upper), categorical = categorical,
@@ -1855,7 +1874,11 @@ tceq_dashboard_server <- function(
       shiny::req(identical(input$regional_tabs, "Spatial surface"))
       surface <- regional_surface()
       frames <- regional_frame_sequence()
-      values <- regional_frame_values(frames[[regional_frame_index()]])
+      frame <- frames[[regional_frame_index()]]
+      frame_labels <- tceq_dashboard_regional_frame_labels(
+        frame, input$regional_metric
+      )
+      values <- regional_frame_values(frame)
       if (isTRUE(input$regional_compare)) {
         tceq_surface <- surface
         tceq_surface$value <- surface$tceq$value
@@ -1865,12 +1888,14 @@ tceq_dashboard_server <- function(
         aqmesh_surface$supported <- surface$aqmesh$supported
         session$sendCustomMessage(
           "pm25-surface-frame",
-          regional_surface_payload(tceq_surface, "TCEQ", "regional_tceq_map")
+          regional_surface_payload(
+            tceq_surface, "TCEQ", "regional_tceq_map", frame_labels
+          )
         )
         session$sendCustomMessage(
           "pm25-surface-frame",
           regional_surface_payload(
-            aqmesh_surface, "Dallas AQMesh", "regional_aqmesh_map"
+            aqmesh_surface, "Dallas AQMesh", "regional_aqmesh_map", frame_labels
           )
         )
         update_regional_markers("regional_tceq_map", values, "TCEQ")
@@ -1881,7 +1906,7 @@ tceq_dashboard_server <- function(
         session$sendCustomMessage(
           "pm25-surface-frame",
           regional_surface_payload(
-            surface, input$regional_map_view, "regional_surface_map"
+            surface, input$regional_map_view, "regional_surface_map", frame_labels
           )
         )
         update_regional_markers("regional_surface_map", values)
@@ -1928,12 +1953,10 @@ tceq_dashboard_server <- function(
       frames <- regional_frame_sequence()
       frame <- frames[[regional_frame_index()]]
       surface <- regional_surface()
-      label <- if (identical(input$regional_metric, "hourly")) {
-        paste0(
-          format(frame, "%Y-%m-%d %H:%M %Z", tz = "America/Chicago"),
-          " · ", format(frame, "%Y-%m-%d %H:%M UTC", tz = "UTC")
-        )
-      } else as.character(as.Date(frame))
+      label <- paste(
+        tceq_dashboard_regional_frame_labels(frame, input$regional_metric),
+        collapse = " · "
+      )
       validation <- regional_validation()
       metric_name <- if (identical(input$regional_metric, "hourly")) {
         "hourly"

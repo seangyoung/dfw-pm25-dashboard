@@ -193,7 +193,7 @@ ui <- bslib::page_sidebar(
   fillable = TRUE,
   shiny::tags$head(
     shiny::tags$link(
-      rel = "stylesheet", type = "text/css", href = "styles.css?v=regional-ui-3"
+      rel = "stylesheet", type = "text/css", href = "styles.css?v=regional-ui-4"
     ),
     shiny::tags$script(shiny::HTML(
       "Shiny.addCustomMessageHandler('tceq-set-disabled', function(message) {\n",
@@ -251,6 +251,15 @@ ui <- bslib::page_sidebar(
       "        legendRow(div, '#0F766E', 'TCEQ', 'pm25-legend-marker pm25-legend-marker-tceq');\n",
       "      if (message.legend.sensors.indexOf('Dallas AQMesh') >= 0)\n",
       "        legendRow(div, '#7C3AED', 'Dallas AQMesh', 'pm25-legend-marker pm25-legend-marker-aqmesh');\n",
+      "      var frameLabels = message.legend.frame || [];\n",
+      "      if (!Array.isArray(frameLabels)) frameLabels = [frameLabels];\n",
+      "      if (frameLabels.length) {\n",
+      "        var frame = L.DomUtil.create('div', 'pm25-legend-frame', div);\n",
+      "        frameLabels.forEach(function(label) {\n",
+      "          var line = L.DomUtil.create('div', 'pm25-legend-frame-line', frame);\n",
+      "          line.textContent = label;\n",
+      "        });\n",
+      "      }\n",
       "      L.DomEvent.disableClickPropagation(div); L.DomEvent.disableScrollPropagation(div);\n",
       "      return div;\n",
       "    };\n",

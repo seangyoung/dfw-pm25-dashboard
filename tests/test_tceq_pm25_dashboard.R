@@ -380,6 +380,18 @@ if (file.exists(public_build_script)) {
 # Server-level checks use compact in-memory site bundles; no external cache or
 # live TCEQ request is required by the project test suite.
 source(file.path(find_repo_root(), "R", "tceq_pm25_dashboard_app.R"))
+stopifnot(
+  identical(
+    tceq_dashboard_regional_frame_labels(as.Date("2024-07-01"), "daily_avg"),
+    "Date: 2024-07-01"
+  ),
+  identical(
+    tceq_dashboard_regional_frame_labels(
+      as.POSIXct("2024-07-01 18:00:00", tz = "UTC"), "hourly"
+    ),
+    c("Central: 2024-07-01 13:00 CDT", "UTC: 2024-07-01 18:00 UTC")
+  )
+)
 window_bounds <- as.Date(c("2024-01-01", "2024-06-30"))
 latest_30 <- tceq_dashboard_window_dates(
   window_bounds[1], window_bounds[2], 30L, window_bounds[2]
@@ -578,9 +590,18 @@ shiny::testServer(
     )
     session$setInputs(regional_tabs = "Spatial surface", regional_generate = 1L)
     session$flushReact()
+    fixed_scale_payload <- regional_surface_payload(
+      regional_surface(), "Combined", "regional_surface_map",
+      tceq_dashboard_regional_frame_labels(
+        regional_frame_sequence()[[regional_frame_index()]], input$regional_metric
+      )
+    )
     stopifnot(
       identical(rv$regional_animation$key, regional_surface_key()),
-      length(rv$regional_animation$frames) == 2L
+      length(rv$regional_animation$frames) == 2L,
+      fixed_scale_payload$upper == 30,
+      identical(fixed_scale_payload$legend$high, "30+"),
+      identical(fixed_scale_payload$legend$frame, "Date: 2024-01-01")
     )
   }
 )
