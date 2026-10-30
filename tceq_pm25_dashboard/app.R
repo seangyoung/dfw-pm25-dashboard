@@ -200,6 +200,27 @@ ui <- bslib::page_sidebar(
       "  var element = document.getElementById(message.id);\n",
       "  if (element) element.disabled = Boolean(message.disabled);\n",
       "});\n",
+      "Shiny.addCustomMessageHandler('pm25-download-csv', function(message) {\n",
+      "  var blob = new Blob(['\\ufeff', message.content], {type: 'text/csv;charset=utf-8'});\n",
+      "  var url = URL.createObjectURL(blob);\n",
+      "  var link = document.createElement('a');\n",
+      "  link.style.display = 'none';\n",
+      "  link.href = url;\n",
+      "  link.download = message.filename;\n",
+      "  document.body.appendChild(link);\n",
+      "  link.click();\n",
+      "  setTimeout(function() {\n",
+      "    link.remove();\n",
+      "    URL.revokeObjectURL(url);\n",
+      "  }, 1000);\n",
+      "});\n",
+      "document.addEventListener('click', function(event) {\n",
+      "  var link = event.target.closest('a.pm25-client-download');\n",
+      "  if (!link) return;\n",
+      "  event.preventDefault();\n",
+      "  event.stopImmediatePropagation();\n",
+      "  Shiny.setInputValue(link.id + '_request', Date.now(), {priority: 'event'});\n",
+      "}, true);\n",
       "(function() {\n",
       "  var overlays = {}, legends = {};\n",
       "  var palette = ['#440154','#414487','#2A788E','#22A884','#7AD151','#FDE725'];\n",
@@ -451,15 +472,24 @@ ui <- bslib::page_sidebar(
         condition = "input.regional_tabs == 'Event alignment'",
         shiny::div(
           class = "download-row",
-          shiny::downloadButton("download_regional_reach", "Download reach"),
-          shiny::downloadButton("download_regional_overlap", "Download overlaps")
+          shiny::downloadButton(
+            "download_regional_reach", "Download reach",
+            class = "pm25-client-download"
+          ),
+          shiny::downloadButton(
+            "download_regional_overlap", "Download overlaps",
+            class = "pm25-client-download"
+          )
         )
       ),
       shiny::conditionalPanel(
         condition = "input.regional_tabs == 'Spatial surface'",
         shiny::div(
           class = "download-row",
-          shiny::downloadButton("download_regional_grid", "Download current grid")
+          shiny::downloadButton(
+            "download_regional_grid", "Download current grid",
+            class = "pm25-client-download"
+          )
         )
       )
     )

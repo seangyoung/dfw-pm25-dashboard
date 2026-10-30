@@ -361,10 +361,18 @@ app_server_source <- readLines(
   file.path(find_repo_root(), "R", "tceq_pm25_dashboard_app.R"),
   warn = FALSE
 )
+app_ui_source <- readLines(
+  file.path(find_repo_root(), "tceq_pm25_dashboard", "app.R"),
+  warn = FALSE
+)
 stopifnot(
   any(grepl("World_Light_Gray_Base", app_server_source, fixed = TRUE)),
   any(grepl("World_Light_Gray_Reference", app_server_source, fixed = TRUE)),
-  !any(grepl("CartoDB.Positron", app_server_source, fixed = TRUE))
+  !any(grepl("CartoDB.Positron", app_server_source, fixed = TRUE)),
+  any(grepl("pm25-download-csv", app_ui_source, fixed = TRUE)),
+  any(grepl("pm25-client-download", app_ui_source, fixed = TRUE)),
+  any(grepl("download_regional_grid_request", app_server_source, fixed = TRUE)),
+  any(grepl("readr::format_csv", app_server_source, fixed = TRUE))
 )
 public_build_script <- file.path(find_repo_root(), "scripts", "build_shinylive.R")
 if (file.exists(public_build_script)) {
@@ -603,5 +611,22 @@ shiny::testServer(
       identical(fixed_scale_payload$legend$high, "30+"),
       identical(fixed_scale_payload$legend$frame, "Date: 2024-01-01")
     )
+    download <- session$.__enclos_env__$private$file_generators$get(
+      session$ns("download_regional_grid")
+    )
+    download_path <- session$.__enclos_env__$private$renderFile(
+      "download_regional_grid", download
+    )
+    downloaded_grid <- readr::read_csv(download_path, show_col_types = FALSE)
+    stopifnot(
+      basename(download_path) ==
+        "dfw_pm25_grid_Combined_2024-01-01.csv",
+      nrow(downloaded_grid) == 1L,
+      downloaded_grid$inside_region,
+      downloaded_grid$metric == "daily_avg",
+      downloaded_grid$surface_view == "Combined"
+    )
+    session$setInputs(download_regional_grid_request = 1L)
+    session$flushReact()
   }
 )

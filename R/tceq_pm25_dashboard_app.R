@@ -2009,54 +2009,78 @@ tceq_dashboard_server <- function(
       )
     })
 
+    send_csv_download <- function(filename, data) {
+      session$sendCustomMessage(
+        "pm25-download-csv",
+        list(
+          filename = filename,
+          content = readr::format_csv(data, na = "")
+        )
+      )
+    }
+
+    regional_reach_filename <- shiny::reactive(paste0(
+      "dfw_pm25_regional_reach_", regional_dates()[1], "_",
+      regional_dates()[2], ".csv"
+    ))
+    regional_overlap_filename <- shiny::reactive(paste0(
+      gsub("[^A-Za-z0-9_-]", "_", regional_anchor()$event_key),
+      "_overlaps.csv"
+    ))
+    regional_grid_filename <- shiny::reactive({
+      frame <- regional_frame_sequence()[[regional_frame_index()]]
+      stamp <- if (inherits(frame, "POSIXt")) {
+        format(frame, "%Y%m%dT%H%MZ", tz = "UTC")
+      } else as.character(as.Date(frame))
+      name <- paste0("dfw_pm25_grid_", input$regional_map_view, "_", stamp, ".csv")
+      gsub("[^A-Za-z0-9_.-]", "_", name)
+    })
+    regional_grid_download <- shiny::reactive({
+      surface <- regional_surface()
+      spatial <- regional_spatial()
+      frame <- regional_frame_sequence()[[regional_frame_index()]]
+      tibble::tibble(
+        frame_utc = if (inherits(frame, "POSIXt")) {
+          format(frame, "%Y-%m-%d %H:%M:%S UTC", tz = "UTC")
+        } else paste0(as.Date(frame), " (daily Central-date aggregate)"),
+        metric = input$regional_metric,
+        surface_view = input$regional_map_view,
+        longitude = spatial$grid$longitude,
+        latitude = spatial$grid$latitude,
+        inside_region = spatial$grid$inside_region,
+        supported = surface$supported,
+        interpolated_pm25_ug_m3 = surface$value,
+        tceq_pm25_ug_m3 = surface$tceq$value,
+        aqmesh_pm25_ug_m3 = surface$aqmesh$value,
+        absolute_network_disagreement = surface$disagreement,
+        nearby_sensor_count = surface$nearby_count,
+        nearest_sensor_km = surface$nearest_m / 1000,
+        network_contribution = surface$contribution
+      ) |>
+        dplyr::filter(.data$inside_region)
+    })
+
+    shiny::observeEvent(input$download_regional_reach_request, {
+      send_csv_download(regional_reach_filename(), regional_window_reach())
+    }, ignoreInit = TRUE)
+    shiny::observeEvent(input$download_regional_overlap_request, {
+      send_csv_download(regional_overlap_filename(), regional_anchor_links())
+    }, ignoreInit = TRUE)
+    shiny::observeEvent(input$download_regional_grid_request, {
+      send_csv_download(regional_grid_filename(), regional_grid_download())
+    }, ignoreInit = TRUE)
+
     output$download_regional_reach <- shiny::downloadHandler(
-      filename = function() paste0(
-        "dfw_pm25_regional_reach_", regional_dates()[1], "_",
-        regional_dates()[2], ".csv"
-      ),
+      filename = regional_reach_filename,
       content = function(file) readr::write_csv(regional_window_reach(), file, na = "")
     )
     output$download_regional_overlap <- shiny::downloadHandler(
-      filename = function() paste0(
-        gsub("[^A-Za-z0-9_-]", "_", regional_anchor()$event_key),
-        "_overlaps.csv"
-      ),
+      filename = regional_overlap_filename,
       content = function(file) readr::write_csv(regional_anchor_links(), file, na = "")
     )
     output$download_regional_grid <- shiny::downloadHandler(
-      filename = function() {
-        frame <- regional_frame_sequence()[[regional_frame_index()]]
-        stamp <- if (inherits(frame, "POSIXt")) {
-          format(frame, "%Y%m%dT%H%MZ", tz = "UTC")
-        } else as.character(as.Date(frame))
-        name <- paste0("dfw_pm25_grid_", input$regional_map_view, "_", stamp, ".csv")
-        gsub("[^A-Za-z0-9_.-]", "_", name)
-      },
-      content = function(file) {
-        surface <- regional_surface()
-        spatial <- regional_spatial()
-        frame <- regional_frame_sequence()[[regional_frame_index()]]
-        grid <- tibble::tibble(
-          frame_utc = if (inherits(frame, "POSIXt")) {
-            format(frame, "%Y-%m-%d %H:%M:%S UTC", tz = "UTC")
-          } else paste0(as.Date(frame), " (daily Central-date aggregate)"),
-          metric = input$regional_metric,
-          surface_view = input$regional_map_view,
-          longitude = spatial$grid$longitude,
-          latitude = spatial$grid$latitude,
-          inside_region = spatial$grid$inside_region,
-          supported = surface$supported,
-          interpolated_pm25_ug_m3 = surface$value,
-          tceq_pm25_ug_m3 = surface$tceq$value,
-          aqmesh_pm25_ug_m3 = surface$aqmesh$value,
-          absolute_network_disagreement = surface$disagreement,
-          nearby_sensor_count = surface$nearby_count,
-          nearest_sensor_km = surface$nearest_m / 1000,
-          network_contribution = surface$contribution
-        ) |>
-          dplyr::filter(.data$inside_region)
-        readr::write_csv(grid, file, na = "")
-      }
+      filename = regional_grid_filename,
+      content = function(file) readr::write_csv(regional_grid_download(), file, na = "")
     )
 
     output$download_hourly <- shiny::downloadHandler(
