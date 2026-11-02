@@ -11,6 +11,13 @@ the browser through Shinylive; no server-side R session receives user activity
 or data. A synchronized selector switches between **Combined**, **TCEQ**, and
 **Dallas AQMesh** networks.
 
+At both TCEQ and Dallas AQMesh sites, a measurement selector switches the Overview, hourly
+heatmap, temporal-pattern plots, and visible-data download among PM2.5, PM10,
+NO2, O3, temperature, and relative humidity when those measurements are
+available at the selected location. Temperature and humidity are presented as
+environmental context rather than pollutants. PM2.5 event and regional
+analyses remain PM2.5-specific regardless of this site-level choice.
+
 The **Regional analysis** section compares existing multi-day events directly
 across sensors and provides network-balanced reach summaries. Its spatial view
 uses separately calculated TCEQ and AQMesh inverse-distance-weighted surfaces,
@@ -42,9 +49,18 @@ assignments, causal source attribution, or regulatory determinations.
 The versioned deployment cache contains 17 public TCEQ monitoring locations and
 32 public City of Dallas AQMesh locations. The TCEQ site-hour composite prefers
 regulatory parameter 88101 and uses acceptable parameter 88502 only when no
-finite 88101 measurement is available. Dallas calculations use the City's
-scaled PM2.5 field and retain the latest append-date revision for each pod-hour.
-Underlying source records, quality flags, revision information, provenance,
+finite 88101 measurement is available. TCEQ site bundles also retain PM10
+(81102), NO2 (42602), O3 (44201), outdoor temperature (62101), and relative
+humidity (62201) where reported; regulatory-QA records are preferred and
+temperature is converted from °F to °C. TCEQ 81102 PM10 is reported at
+standard conditions and is not treated as method-equivalent to the AQMesh
+scaled PM10 field. Clearly implausible numeric values are retained in the raw
+archive but excluded from dashboard composites. Dallas calculations use the City's
+scaled PM2.5, PM10, NO2, O3, temperature, and humidity fields and retain the
+latest append-date revision for each pod-hour. Measurement-specific QA excludes
+sentinels, negative values, incompatible gas units, non-reading gas states,
+fault statuses, and clearly implausible ranges from calculations. Underlying
+source records, quality flags, revision information, provenance,
 and file hashes are preserved in the prepared bundles.
 
 TCEQ timestamps are presented as local standard time without daylight-saving
@@ -83,9 +99,11 @@ Rscript --vanilla scripts/08h_prepare_combined_pm25_dashboard.R
 ```
 
 Parameter 88101 remains primary at each site-hour; parameter 88502 is retained
-and used only as a fallback. Raw parameter codes, POCs, report tables, QA
-statements, flags, and source filenames remain available for diagnostics. The
-Dallas workflow archives the original paginated ArcGIS responses and retains
+and used only as a fallback. The same acquisition script downloads TCEQ 81102,
+42602, 44201, 62101, and 62201 streams for dashboard PM2.5 sites when TCEQ
+reports them. Raw parameter codes, units, POCs, report tables, QA statements,
+flags, and source filenames remain available for diagnostics. The Dallas
+workflow archives the original paginated ArcGIS responses and retains
 superseded revisions for auditability.
 
 ## Browser compatibility
@@ -122,6 +140,16 @@ from the committed source and cache.
 Reviewed changes pushed to `main` deploy automatically. The manual control can
 rebuild the current commit without another push. No repository secret is
 required.
+
+The `feature/multi-pollutant-dashboard` branch publishes a comparison build
+without replacing the stable URL. Its workflow rebuilds `main` at the site root
+and publishes the experimental dashboard at:
+
+<https://seangyoung.github.io/dfw-pm25-dashboard/multi-pollutant/>
+
+Because the experimental browser payload contains additional measurements, its
+first load can take longer than the stable dashboard. Use a fresh private window
+for each URL when comparing uncached load times.
 
 ## Validation
 

@@ -11,6 +11,7 @@ if (length(script_arg)) {
 
 source(file.path(root, "R", "utils.R"))
 source(file.path(root, "R", "tceq_pm25_dashboard.R"))
+source(file.path(root, "R", "tceq_multi_measurement.R"))
 require_packages(c(
   "curl", "digest", "dplyr", "jsonlite", "purrr", "readr", "rvest",
   "stringr", "tibble", "tidyr", "yaml"
@@ -111,6 +112,13 @@ if (!setequal(names(by_site), station_metadata$aqs_site_id)) {
     paste(sort(station_metadata$aqs_site_id), collapse = ", "), "."
   )
 }
+raw_manifest <- readr::read_csv(raw_manifest_path, show_col_types = FALSE)
+supplemental_codes <- tceq_supplemental_measurement_catalog()$parameter_code
+supplemental_manifest <- raw_manifest |>
+  dplyr::filter(
+    .data$parameter_code %in% supplemental_codes,
+    !is.na(.data$relative_path), nzchar(.data$relative_path)
+  )
 
 site_summaries <- vector("list", length(by_site))
 daily_indexes <- vector("list", length(by_site))
@@ -130,15 +138,30 @@ for (site_id in names(by_site)) {
   hourly <- tceq_build_hourly_composite(raw)
   daily <- tceq_build_daily_summary(hourly, raw, minimum_valid_hours = 18L)
   events <- tceq_build_event_index(hourly, daily)
+  site_supplemental_files <- supplemental_manifest |>
+    dplyr::filter(.data$aqs_site_id == site_id) |>
+    dplyr::pull(.data$relative_path) |>
+    unique()
+  site_supplemental_raw <- load_tceq_dfw_supplemental(
+    raw_dir, site_supplemental_files
+  )
+  site_supplemental_hourly <- tceq_build_supplemental_hourly(
+    site_supplemental_raw
+  )
+  hourly <- tceq_merge_supplemental_hourly(hourly, site_supplemental_hourly)
   metadata <- station_metadata |>
     dplyr::filter(.data$aqs_site_id == site_id)
+  hourly$site_name <- metadata$site_name[[1]]
   bundle <- list(
-    schema_version = 3L,
+    schema_version = 4L,
     metadata = metadata,
     hourly = tibble::as_tibble(hourly),
     daily = tibble::as_tibble(daily),
     events = tibble::as_tibble(events),
-    raw_hourly = tibble::as_tibble(raw)
+    raw_hourly = tibble::as_tibble(raw),
+    supplemental_provenance = tceq_supplemental_provenance(
+      site_supplemental_raw
+    )
   )
   site_path <- file.path(cache_dir, "sites", tceq_site_cache_filename(site_id))
   atomic_save_rds(bundle, site_path)
@@ -150,6 +173,23 @@ for (site_id in names(by_site)) {
     last_date = max(hourly$date),
     hourly_rows = nrow(hourly),
     valid_hours = sum(is.finite(hourly$composite_pm25_ug_m3)),
+    valid_pm10_hours = if ("composite_pm10_ug_m3" %in% names(hourly)) {
+      sum(is.finite(hourly$composite_pm10_ug_m3))
+    } else 0L,
+    valid_no2_hours = if ("composite_no2_ppb" %in% names(hourly)) {
+      sum(is.finite(hourly$composite_no2_ppb))
+    } else 0L,
+    valid_o3_hours = if ("composite_o3_ppb" %in% names(hourly)) {
+      sum(is.finite(hourly$composite_o3_ppb))
+    } else 0L,
+    valid_temperature_hours = if ("composite_temperature_c" %in% names(hourly)) {
+      sum(is.finite(hourly$composite_temperature_c))
+    } else 0L,
+    valid_humidity_hours = if (
+      "composite_relative_humidity_percent" %in% names(hourly)
+    ) {
+      sum(is.finite(hourly$composite_relative_humidity_percent))
+    } else 0L,
     qa_fallback_hours = sum(
       hourly$qa_fallback & is.finite(hourly$composite_pm25_ug_m3)
     ),
@@ -161,7 +201,10 @@ for (site_id in names(by_site)) {
     site_cache_file = file.path("sites", basename(site_path)),
     site_cache_sha256 = sha256_file(site_path)
   )
-  rm(raw, hourly, daily, events, bundle)
+  rm(
+    raw, hourly, daily, events, bundle, site_supplemental_raw,
+    site_supplemental_hourly
+  )
   invisible(gc())
 }
 
@@ -180,7 +223,7 @@ atomic_write_csv(station_index, file.path(cache_dir, "station_index.csv"))
 atomic_write_csv(event_index, file.path(cache_dir, "event_index.csv"))
 
 manifest <- list(
-  schema_version = 3L,
+  schema_version = 4L,
   generated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
   raw_data_dir = normalizePath(raw_dir, winslash = "/"),
   raw_manifest_path = normalizePath(raw_manifest_path, winslash = "/"),
@@ -189,6 +232,13 @@ manifest <- list(
   station_count = nrow(station_index),
   hourly_composite_rows = sum(station_index$hourly_rows),
   valid_hourly_values = sum(station_index$valid_hours),
+  valid_supplemental_values = list(
+    pm10 = sum(station_index$valid_pm10_hours),
+    no2 = sum(station_index$valid_no2_hours),
+    o3 = sum(station_index$valid_o3_hours),
+    temperature = sum(station_index$valid_temperature_hours),
+    humidity = sum(station_index$valid_humidity_hours)
+  ),
   event_count = nrow(event_index),
   short_spike_events = sum(event_index$event_type == "short_spike"),
   multi_day_events = sum(event_index$event_type == "multi_day"),
@@ -201,6 +251,11 @@ manifest <- list(
       "then take the median of qualifying records"
     ),
     parameter_priority = c("88101", "88502"),
+    supplemental_parameters = list(
+      pm10 = "81102 (ug/m3)", no2 = "42602 (ppb)", o3 = "44201 (ppb)",
+      temperature = "62101 (degrees F converted to degrees C)",
+      humidity = "62201 (percent)"
+    ),
     daily_minimum_valid_hours = 18L,
     short_spike = "Strictly greater than 35 ug/m3 for a maximal run of 1-5 consecutive hours",
     multi_day = paste(

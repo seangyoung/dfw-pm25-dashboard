@@ -91,6 +91,11 @@ for (month in unique(download_manifest$month)) {
     superseded_revision_rows = nrow(raw) - nrow(clean),
     valid_scaled_pm25_rows = sum(is.finite(clean$pm25_ug_m3)),
     flagged_or_missing_pm25_rows = sum(!is.finite(clean$pm25_ug_m3)),
+    valid_scaled_pm10_rows = sum(is.finite(clean$pm10_ug_m3)),
+    valid_scaled_no2_rows = sum(is.finite(clean$no2_ppb)),
+    valid_scaled_o3_rows = sum(is.finite(clean$o3_ppb)),
+    valid_temperature_rows = sum(is.finite(clean$temperature_c)),
+    valid_humidity_rows = sum(is.finite(clean$relative_humidity_percent)),
     field_site_rows = sum(clean$location_class == "field_site"),
     characterisation_rows = sum(clean$location_class == "characterisation"),
     commissioning_rows = sum(clean$location_class == "commissioning"),
@@ -125,7 +130,7 @@ readr::write_csv(location_audit, file.path(output_dir, "location_alias_audit.csv
 monthly_manifest <- dplyr::bind_rows(monthly_rows)
 readr::write_csv(monthly_manifest, file.path(output_dir, "import_manifest.csv"), na = "")
 metadata <- list(
-  schema_version = 1L,
+  schema_version = 2L,
   generated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
   raw_dir = normalizePath(raw_dir, winslash = "/"),
   raw_download_manifest_sha256 = sha256_file(manifest_path),
@@ -141,11 +146,24 @@ metadata <- list(
     "Retain the maximum append_date, then maximum OBJECTID, within",
     "location_name x pod_serial_number x project_time_interval_start"
   ),
-  analytical_value = "pm2_5_scaled",
+  analytical_values = list(
+    pm25 = "pm2_5_scaled in µg/m³",
+    pm10 = "pm10_scaled in µg/m³",
+    no2 = "no2_scaled records reported in ppb",
+    o3 = "o3_scaled records reported in ppb",
+    temperature = "temperature_f converted to degrees Celsius",
+    relative_humidity = "humidity in percent"
+  ),
   invalid_value_rules = list(
     sentinel = "Values <= -900 are flagged SENTINEL and set to NA",
     negative = "Other negative scaled PM2.5 values are flagged NEG and set to NA",
-    excluded_reading_status = c("Deliq", "Deliquescence", "Other Fault Zero")
+    excluded_reading_status = c("Deliq", "Deliquescence", "Other Fault Zero"),
+    gas_units = "NO2 and O3 records not reported in ppb are retained raw but excluded",
+    gas_state = "Non-missing NO2 states other than Reading are excluded",
+    upper_bounds = list(pm10_ug_m3 = 5000, no2_ppb = 1000, o3_ppb = 1000),
+    meteorology_bounds = list(
+      temperature_c = c(-30, 60), relative_humidity_percent = c(0, 100)
+    )
   ),
   nonfield_policy = paste(
     "Characterisation, Pod commissioning, and missing-location records remain",

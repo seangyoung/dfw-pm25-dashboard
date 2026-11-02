@@ -20,6 +20,14 @@ revision_fixture <- tibble::tibble(
   ),
   pm2_5_prescale = c(39, 40, 42, -999),
   pm2_5_scaled = c(39, 40, 42, -999),
+  pm10_scaled = c(59, 60, 64, -999),
+  no2_scaled = c(9, 10, 12, -999),
+  no2_units = "ppb",
+  no2_state = "Reading",
+  o3_scaled = c(29, 30, 34, 1500),
+  o3_units = "ppb",
+  humidity = c(49, 50, 54, 55),
+  temperature_f = c(67, 68, 71.6, 70),
   reading_status = c("OK", "OK", "NA", "OK"),
   particleprotocol_version = "test",
   pod_latitude = 32.9,
@@ -38,7 +46,13 @@ stopifnot(
   all(clean_fixture$aqs_site_id == "DAL_AQMESH_FRETZ_PARK"),
   identical(clean_fixture$hour, c(1L, 1L, 2L)),
   is.na(clean_fixture$pm25_ug_m3[3]),
-  clean_fixture$value_flag[3] == "SENTINEL"
+  clean_fixture$value_flag[3] == "SENTINEL",
+  clean_fixture$pm10_ug_m3[1] == 60,
+  clean_fixture$no2_ppb[1] == 10,
+  clean_fixture$o3_ppb[1] == 30,
+  clean_fixture$relative_humidity_percent[1] == 50,
+  clean_fixture$temperature_c[1] == 20,
+  clean_fixture$o3_flag[3] == "OUT_OF_RANGE_HIGH"
 )
 
 hourly_utc_fixture <- aqmesh_build_utc_composite(clean_fixture)
@@ -47,14 +61,23 @@ stopifnot(
   nrow(hourly_utc_fixture) == 3L,
   nrow(display_fixture) == 2L,
   display_fixture$dst_fold_count[display_fixture$hour == 1L] == 2L,
-  display_fixture$composite_pm25_ug_m3[display_fixture$hour == 1L] == 41
+  display_fixture$composite_pm25_ug_m3[display_fixture$hour == 1L] == 41,
+  display_fixture$composite_pm10_ug_m3[display_fixture$hour == 1L] == 62,
+  display_fixture$composite_no2_ppb[display_fixture$hour == 1L] == 11,
+  display_fixture$composite_o3_ppb[display_fixture$hour == 1L] == 32,
+  display_fixture$composite_temperature_c[display_fixture$hour == 1L] == 21,
+  display_fixture$composite_relative_humidity_percent[
+    display_fixture$hour == 1L
+  ] == 52
 )
 
 complete_fixture <- aqmesh_complete_display_hours(display_fixture)
 stopifnot(
   nrow(complete_fixture) == 24L,
   length(unique(complete_fixture$hour)) == 24L,
-  sum(is.finite(complete_fixture$composite_pm25_ug_m3)) == 1L
+  sum(is.finite(complete_fixture$composite_pm25_ug_m3)) == 1L,
+  sum(is.finite(complete_fixture$composite_pm10_ug_m3)) == 1L,
+  sum(is.finite(complete_fixture$composite_no2_ppb)) == 1L
 )
 
 quality_fixture <- tceq_dashboard_yearly_quality(list(

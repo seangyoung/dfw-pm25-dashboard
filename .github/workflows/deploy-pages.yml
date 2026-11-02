@@ -1,11 +1,13 @@
 name: Deploy DFW PM2.5 dashboard to GitHub Pages
 
-# Publish reviewed changes from main; workflow_dispatch also permits a manual
-# rebuild without changing repository content.
+# Publish reviewed changes from main. The multi-pollutant feature branch builds
+# main at the stable root and its own preview at /multi-pollutant/ so both can
+# be compared without replacing the stable dashboard.
 'on':
   push:
     branches:
       - main
+      - feature/multi-pollutant-dashboard
   workflow_dispatch:
 
 permissions:
@@ -39,10 +41,40 @@ jobs:
             any::shinylive
 
       - name: Build and validate the Shinylive site
+        if: github.ref_name == 'main'
         run: >-
           Rscript --vanilla scripts/build_shinylive.R
           --cache-dir=tceq_pm25_dashboard/deploy_cache
           --output-dir=_site
+
+      - name: Build the multi-pollutant preview
+        if: github.ref_name == 'feature/multi-pollutant-dashboard'
+        run: >-
+          Rscript --vanilla scripts/build_shinylive.R
+          --cache-dir=tceq_pm25_dashboard/deploy_cache
+          --output-dir=_preview_site
+
+      - name: Check out main for the stable dashboard
+        if: github.ref_name == 'feature/multi-pollutant-dashboard'
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          path: stable-source
+
+      - name: Build the stable dashboard from main
+        if: github.ref_name == 'feature/multi-pollutant-dashboard'
+        working-directory: stable-source
+        run: >-
+          Rscript --vanilla scripts/build_shinylive.R
+          --cache-dir=tceq_pm25_dashboard/deploy_cache
+          --output-dir=_site
+
+      - name: Assemble stable and preview sites
+        if: github.ref_name == 'feature/multi-pollutant-dashboard'
+        run: |
+          mv stable-source/_site _site
+          mkdir -p _site/multi-pollutant
+          cp -R _preview_site/. _site/multi-pollutant/
 
       - uses: actions/upload-pages-artifact@v4
         with:

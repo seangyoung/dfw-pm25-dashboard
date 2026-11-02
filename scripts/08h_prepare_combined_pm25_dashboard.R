@@ -133,7 +133,7 @@ for (site_id in tceq_stations$aqs_site_id) {
         TRUE ~ "not_reported"
       )
     )
-  bundle$schema_version <- 4L
+  bundle$schema_version <- 6L
   output_path <- file.path(cache_dir, "sites", tceq_site_cache_filename(site_id))
   atomic_save_rds(bundle, output_path)
   row <- tceq_stations[tceq_stations$aqs_site_id == site_id, , drop = FALSE]
@@ -153,6 +153,7 @@ for (site_id in tceq_stations$aqs_site_id) {
   daily_indexes[[site_id]] <- bundle$daily
   event_indexes[[site_id]] <- bundle$events
   regional_hourly_rows[[site_id]] <- bundle$hourly |>
+    dplyr::filter(!is.na(.data$total_records)) |>
     dplyr::select(
       "aqs_site_id", "datetime_utc", "composite_pm25_ug_m3"
     )
@@ -188,6 +189,11 @@ for (site_id in field_ids) {
     dplyr::select(dplyr::all_of(c(
       "datetime_lstd", "datetime_utc", "pm25_raw", "pm25_scaled_raw",
       "pm25_prescale_raw", "pm25_ug_m3", "value_flag", "reading_status",
+      "pm10_raw", "pm10_ug_m3", "pm10_flag",
+      "no2_raw", "no2_ppb", "no2_flag", "no2_units", "no2_state",
+      "o3_raw", "o3_ppb", "o3_flag", "o3_units",
+      "temperature_f_raw", "temperature_c", "temperature_flag",
+      "humidity_raw", "relative_humidity_percent", "humidity_flag",
       "reading_status_normalized", "particleprotocol_version",
       "pod_serial_number", "source_file", "report_block", "poc",
       "parameter_code", "regulatory_qa", "raw_series_key", "revision_count",
@@ -195,7 +201,7 @@ for (site_id in field_ids) {
     ))) |>
     dplyr::mutate(data_source = "Dallas AQMesh")
   bundle <- list(
-    schema_version = 4L,
+    schema_version = 6L,
     metadata = metadata,
     hourly = tibble::as_tibble(hourly),
     daily = tibble::as_tibble(daily),
@@ -203,7 +209,10 @@ for (site_id in field_ids) {
     raw_hourly = tibble::as_tibble(diagnostic_raw),
     provenance = list(
       source = "City of Dallas AQMesh ArcGIS hourly layer",
-      analytical_value = "pm2_5_scaled",
+      analytical_values = c(
+        "pm2_5_scaled", "pm10_scaled", "no2_scaled_ppb", "o3_scaled_ppb",
+        "temperature_f_converted_to_c", "humidity_percent"
+      ),
       regulatory_status = paste(
         "Non-regulatory, unverified community-sensor data; not a NAAQS determination"
       ),
@@ -218,6 +227,13 @@ for (site_id in field_ids) {
       last_date = max(hourly$date),
       hourly_rows = nrow(hourly),
       valid_hours = sum(is.finite(hourly$composite_pm25_ug_m3)),
+      valid_pm10_hours = sum(is.finite(hourly$composite_pm10_ug_m3)),
+      valid_no2_hours = sum(is.finite(hourly$composite_no2_ppb)),
+      valid_o3_hours = sum(is.finite(hourly$composite_o3_ppb)),
+      valid_temperature_hours = sum(is.finite(hourly$composite_temperature_c)),
+      valid_humidity_hours = sum(
+        is.finite(hourly$composite_relative_humidity_percent)
+      ),
       qa_fallback_hours = sum(
         hourly$qa_fallback & is.finite(hourly$composite_pm25_ug_m3)
       ),
@@ -314,7 +330,7 @@ regional_files <- c(
 regional_hourly_files <- regional_hourly$index$years$file
 all_regional_files <- c(regional_files, regional_hourly_files)
 manifest <- list(
-  schema_version = 5L,
+  schema_version = 7L,
   generated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
   data_sources = c("TCEQ", "Dallas AQMesh"),
   source_counts = as.list(table(station_index$data_source)),
@@ -329,13 +345,28 @@ manifest <- list(
     source_cache = normalizePath(tceq_cache, winslash = "/"),
     cache_manifest_sha256 = sha256_file(file.path(tceq_cache, "cache_manifest.json")),
     raw_manifest_sha256 = tceq_manifest$raw_manifest_sha256,
-    parameter_priority = c("88101", "88502")
+    parameter_priority = c("88101", "88502"),
+    analytical_values = list(
+      pm25 = "88101 with 88502 fallback in µg/m³",
+      pm10 = "81102 in µg/m³",
+      no2 = "42602 in ppb",
+      o3 = "44201 in ppb",
+      temperature = "62101 converted from degrees Fahrenheit to degrees Celsius",
+      relative_humidity = "62201 in percent"
+    )
   ),
   dallas_aqmesh = list(
     source_import = normalizePath(aqmesh_import, winslash = "/"),
     import_metadata_sha256 = sha256_file(file.path(aqmesh_import, "import_metadata.json")),
     raw_download_manifest_sha256 = aqmesh_manifest$raw_download_manifest_sha256,
-    analytical_value = "pm2_5_scaled",
+    analytical_values = list(
+      pm25 = "pm2_5_scaled in µg/m³",
+      pm10 = "pm10_scaled in µg/m³",
+      no2 = "no2_scaled ppb records",
+      o3 = "o3_scaled ppb records",
+      temperature = "temperature_f converted to degrees Celsius",
+      relative_humidity = "humidity in percent"
+    ),
     revision_rule = aqmesh_manifest$revision_rule,
     regulatory_status = "Non-regulatory, unverified community-sensor data"
   ),

@@ -5,6 +5,129 @@ tceq_dashboard_plot_config <- function(plot) {
   )
 }
 
+tceq_dashboard_measurement_catalog <- function() {
+  tibble::tribble(
+    ~key, ~label, ~short_label, ~unit, ~value_column, ~flag_column,
+    ~count_column, ~fixed_min, ~fixed_max, ~adaptive_floor, ~zero_based,
+    "pm25", "PM2.5", "PM2.5", "µg/m³", "composite_pm25_ug_m3",
+    "value_flag_summary", "contributing_records", 0, 50, 35, TRUE,
+    "pm10", "PM10", "PM10", "µg/m³", "composite_pm10_ug_m3",
+    "pm10_flag_summary", "pm10_contributing_records", 0, 100, 50, TRUE,
+    "no2", "Nitrogen dioxide (NO₂)", "NO₂", "ppb", "composite_no2_ppb",
+    "no2_flag_summary", "no2_contributing_records", 0, 100, 50, TRUE,
+    "o3", "Ozone (O₃)", "O₃", "ppb", "composite_o3_ppb",
+    "o3_flag_summary", "o3_contributing_records", 0, 100, 50, TRUE,
+    "temperature", "Temperature", "Temperature", "°C",
+    "composite_temperature_c", "temperature_flag_summary",
+    "temperature_contributing_records", -10, 45, NA_real_, FALSE,
+    "humidity", "Relative humidity", "Humidity", "%",
+    "composite_relative_humidity_percent", "humidity_flag_summary",
+    "humidity_contributing_records", 0, 100, NA_real_, TRUE
+  )
+}
+
+tceq_dashboard_measurement_info <- function(key) {
+  catalog <- tceq_dashboard_measurement_catalog()
+  selected <- catalog[catalog$key == key, , drop = FALSE]
+  if (!nrow(selected)) stop("Unknown dashboard measurement: ", key)
+  selected[1, , drop = FALSE]
+}
+
+tceq_dashboard_supported_measurements <- function(bundle) {
+  catalog <- tceq_dashboard_measurement_catalog()
+  supported <- vapply(catalog$value_column, function(column) {
+    column %in% names(bundle$hourly) && any(is.finite(bundle$hourly[[column]]))
+  }, logical(1))
+  catalog[supported, , drop = FALSE]
+}
+
+tceq_dashboard_measurement_hourly <- function(bundle, key) {
+  info <- tceq_dashboard_measurement_info(key)
+  hourly <- bundle$hourly
+  value_column <- info$value_column[[1]]
+  if (!value_column %in% names(hourly)) {
+    stop(info$label[[1]], " is not available for this monitoring site.")
+  }
+  flag_column <- info$flag_column[[1]]
+  count_column <- info$count_column[[1]]
+  hourly$display_value <- as.numeric(hourly[[value_column]])
+  hourly$display_flag <- if (flag_column %in% names(hourly)) {
+    dplyr::coalesce(as.character(hourly[[flag_column]]), "")
+  } else ""
+  hourly$display_contributors <- if (count_column %in% names(hourly)) {
+    dplyr::coalesce(as.integer(hourly[[count_column]]), 0L)
+  } else as.integer(is.finite(hourly$display_value))
+  if (!identical(key, "pm25")) {
+    source <- if (
+      "data_source" %in% names(bundle$metadata) && nrow(bundle$metadata)
+    ) as.character(bundle$metadata$data_source[[1]]) else NA_character_
+    if (identical(source, "TCEQ")) {
+      qa_fallback_column <- paste0("tceq_", key, "_qa_fallback")
+      qa_unavailable_column <- paste0("tceq_", key, "_qa_status_unavailable")
+      qa_fallback <- if (qa_fallback_column %in% names(hourly)) {
+        dplyr::coalesce(as.logical(hourly[[qa_fallback_column]]), FALSE)
+      } else rep(FALSE, nrow(hourly))
+      qa_unavailable <- if (qa_unavailable_column %in% names(hourly)) {
+        dplyr::coalesce(as.logical(hourly[[qa_unavailable_column]]), FALSE)
+      } else rep(FALSE, nrow(hourly))
+      hourly$composite_selection <- dplyr::case_when(
+        !is.finite(hourly$display_value) ~ "missing",
+        qa_fallback ~ "tceq_nonregulatory_qa_fallback",
+        qa_unavailable ~ "tceq_qa_status_unavailable",
+        TRUE ~ "tceq_regulatory_qa_preferred"
+      )
+    } else {
+      fold <- if ("dst_fold_count" %in% names(hourly)) {
+        dplyr::coalesce(as.integer(hourly$dst_fold_count), 0L)
+      } else rep(0L, nrow(hourly))
+      hourly$composite_selection <- dplyr::case_when(
+        !is.finite(hourly$display_value) ~ "missing",
+        fold > 1L ~ "aqmesh_scaled_dst_fold_median",
+        TRUE ~ "aqmesh_scaled_latest_revision"
+      )
+    }
+  } else if (!"composite_selection" %in% names(hourly)) {
+    hourly$composite_selection <- ifelse(
+      is.finite(hourly$display_value), "site_hour_composite", "missing"
+    )
+  }
+  hourly
+}
+
+tceq_dashboard_measurement_daily <- function(hourly) {
+  hourly |>
+    dplyr::group_by(.data$date) |>
+    dplyr::summarise(
+      valid_hours = sum(is.finite(.data$display_value)),
+      daily_average = tceq_safe_mean(.data$display_value),
+      daily_maximum = tceq_safe_max(.data$display_value),
+      daily_median = tceq_safe_median(.data$display_value),
+      daily_iqr = tceq_safe_iqr(.data$display_value),
+      .groups = "drop"
+    )
+}
+
+tceq_complete_measurement_heatmap <- function(
+    hourly, start_date, end_date, maximum_days = 90L) {
+  dates <- tceq_validate_heatmap_range(start_date, end_date, maximum_days)
+  tibble::tibble(date = seq(dates[1], dates[2], by = "day")) |>
+    tidyr::crossing(hour = 0:23) |>
+    dplyr::left_join(
+      hourly |>
+        dplyr::select(dplyr::all_of(c(
+          "date", "hour", "display_value", "display_flag",
+          "display_contributors", "composite_selection"
+        ))),
+      by = c("date", "hour")
+    ) |>
+    dplyr::mutate(
+      hour_lstd = sprintf("%02d:00", .data$hour),
+      composite_selection = dplyr::coalesce(.data$composite_selection, "missing"),
+      display_flag = dplyr::coalesce(.data$display_flag, ""),
+      display_contributors = dplyr::coalesce(.data$display_contributors, 0L)
+    )
+}
+
 tceq_dashboard_regional_concentration_upper <- function() 30
 
 tceq_dashboard_regional_frame_labels <- function(frame, metric) {
@@ -38,19 +161,26 @@ tceq_dashboard_site_choices <- function(station_index) {
   )
 }
 
-tceq_dashboard_default_dates <- function(bundle, days = 30L) {
-  bounds <- tceq_dashboard_date_bounds(bundle)
+tceq_dashboard_default_dates <- function(bundle, days = 30L, measurement = "pm25") {
+  bounds <- tceq_dashboard_date_bounds(bundle, measurement)
   tceq_dashboard_window_dates(bounds[1], bounds[2], days, bounds[2])
 }
 
-tceq_dashboard_date_bounds <- function(bundle) {
+tceq_dashboard_date_bounds <- function(bundle, measurement = "pm25") {
   dates <- as.Date(bundle$hourly$date)
   if (!length(dates) || all(is.na(dates))) {
     stop("The site bundle does not contain usable hourly dates.")
   }
-  finite <- dates[is.finite(bundle$hourly$composite_pm25_ug_m3)]
-  last_date <- if (length(finite)) max(finite, na.rm = TRUE) else max(dates, na.rm = TRUE)
-  as.Date(c(min(dates, na.rm = TRUE), last_date))
+  info <- tceq_dashboard_measurement_info(measurement)
+  value_column <- info$value_column[[1]]
+  if (!value_column %in% names(bundle$hourly)) {
+    stop(info$label[[1]], " is not available for this monitoring site.")
+  }
+  finite <- dates[is.finite(bundle$hourly[[value_column]])]
+  if (!length(finite)) {
+    stop(info$label[[1]], " has no valid values for this monitoring site.")
+  }
+  range(finite, na.rm = TRUE)
 }
 
 tceq_dashboard_window_dates <- function(
@@ -191,8 +321,10 @@ tceq_dashboard_raw_choices <- function(raw) {
 tceq_dashboard_yearly_quality <- function(bundle) {
   hourly <- bundle$hourly
   if (!nrow(hourly)) return(tibble::tibble())
-  first_date <- min(hourly$date)
-  last_date <- max(hourly$date)
+  pm25_dates <- hourly$date[is.finite(hourly$composite_pm25_ug_m3)]
+  if (!length(pm25_dates)) return(tibble::tibble())
+  first_date <- min(pm25_dates)
+  last_date <- max(pm25_dates)
   years <- seq.int(
     as.integer(format(first_date, "%Y")), as.integer(format(last_date, "%Y"))
   )
@@ -274,7 +406,23 @@ tceq_dashboard_server <- function(
       station_index[station_index$aqs_site_id == selected_site(), , drop = FALSE]
     })
     site_bundle <- shiny::reactive(load_bundle(selected_site()))
-    date_bounds <- shiny::reactive(tceq_dashboard_date_bounds(site_bundle()))
+    supported_measurements <- shiny::reactive(
+      tceq_dashboard_supported_measurements(site_bundle())
+    )
+    selected_measurement <- shiny::reactive({
+      supported <- supported_measurements()
+      requested <- input$measurement
+      if (is.null(requested) || !requested %in% supported$key) "pm25" else requested
+    })
+    measurement_info <- shiny::reactive(
+      tceq_dashboard_measurement_info(selected_measurement())
+    )
+    measurement_hourly <- shiny::reactive(
+      tceq_dashboard_measurement_hourly(site_bundle(), selected_measurement())
+    )
+    date_bounds <- shiny::reactive(tceq_dashboard_date_bounds(
+      site_bundle(), selected_measurement()
+    ))
 
     input_date_range <- function() {
       dates <- input$date_range
@@ -333,10 +481,12 @@ tceq_dashboard_server <- function(
       }
     })
 
-    shiny::observeEvent(selected_site(), {
+    shiny::observeEvent(list(selected_site(), selected_measurement()), {
       bundle <- site_bundle()
-      bounds <- tceq_dashboard_date_bounds(bundle)
-      default_dates <- tceq_dashboard_default_dates(bundle, rv$window_days)
+      bounds <- tceq_dashboard_date_bounds(bundle, selected_measurement())
+      default_dates <- tceq_dashboard_default_dates(
+        bundle, rv$window_days, selected_measurement()
+      )
       shiny::updateSelectInput(session, "site", selected = selected_site())
       update_date_window(default_dates, bounds)
     }, ignoreInit = FALSE)
@@ -393,14 +543,14 @@ tceq_dashboard_server <- function(
 
     shiny::observeEvent(input$date_latest, {
       update_date_window(tceq_dashboard_default_dates(
-        site_bundle(), rv$window_days
+        site_bundle(), rv$window_days, selected_measurement()
       ))
     }, ignoreInit = TRUE)
 
     selected_dates <- shiny::reactive({
       bundle <- site_bundle()
       if (is.null(input$date_range) || length(input$date_range) != 2L) {
-        return(tceq_dashboard_default_dates(bundle))
+        return(tceq_dashboard_default_dates(bundle, measurement = selected_measurement()))
       }
       dates <- tryCatch(
         tceq_validate_heatmap_range(input$date_range[1], input$date_range[2]),
@@ -454,6 +604,19 @@ tceq_dashboard_server <- function(
     filtered_hourly <- shiny::reactive({
       dates <- selected_dates()
       site_bundle()$hourly |>
+        dplyr::filter(.data$date >= dates[1], .data$date <= dates[2])
+    })
+    filtered_measurement_hourly <- shiny::reactive({
+      dates <- selected_dates()
+      measurement_hourly() |>
+        dplyr::filter(.data$date >= dates[1], .data$date <= dates[2])
+    })
+    measurement_daily <- shiny::reactive(
+      tceq_dashboard_measurement_daily(measurement_hourly())
+    )
+    filtered_measurement_daily <- shiny::reactive({
+      dates <- selected_dates()
+      measurement_daily() |>
         dplyr::filter(.data$date >= dates[1], .data$date <= dates[2])
     })
     filtered_daily <- shiny::reactive({
@@ -571,28 +734,66 @@ tceq_dashboard_server <- function(
       )
     })
 
+    output$measurement_control <- shiny::renderUI({
+      supported <- supported_measurements()
+      choices <- stats::setNames(supported$key, supported$label)
+      shiny::tagList(
+        shiny::selectInput(
+          "measurement", "Displayed measurement",
+          choices = choices, selected = selected_measurement()
+        ),
+        if (site_record()$data_source == "TCEQ") {
+          shiny::helpText(
+            paste(
+              "TCEQ measurements use regulatory-QA records when available.",
+              "Temperature is converted from °F to °C; PM2.5 event classifications",
+              "remain unchanged.",
+              if (identical(selected_measurement(), "pm10")) {
+                paste(
+                  "TCEQ PM10 is parameter 81102 at standard conditions and is",
+                  "not method-equivalent to the AQMesh scaled PM10 field."
+                )
+              } else ""
+            )
+          )
+        } else {
+          shiny::helpText(
+            paste(
+              "AQMesh measurements are non-regulatory screening data.",
+              "PM2.5 event classifications remain unchanged."
+            )
+          )
+        }
+      )
+    })
+
     selected_values <- shiny::reactive({
-      x <- filtered_hourly()$composite_pm25_ug_m3
+      x <- filtered_measurement_hourly()$display_value
       x[is.finite(x)]
     })
     output$kpi_coverage <- shiny::renderText({
-      h <- filtered_hourly()
-      sprintf("%.1f%%", 100 * sum(is.finite(h$composite_pm25_ug_m3)) /
+      h <- filtered_measurement_hourly()
+      sprintf("%.1f%%", 100 * sum(is.finite(h$display_value)) /
                 (as.integer(diff(selected_dates())) + 1L) / 24)
     })
     output$kpi_latest <- shiny::renderText({
-      finite <- site_bundle()$hourly$date[
-        is.finite(site_bundle()$hourly$composite_pm25_ug_m3)
-      ]
+      h <- measurement_hourly()
+      finite <- h$date[is.finite(h$display_value)]
       if (length(finite)) as.character(max(finite)) else "No valid values"
     })
     output$kpi_max <- shiny::renderText({
       x <- selected_values()
-      if (length(x)) sprintf("%.1f µg/m³", max(x)) else "—"
+      if (length(x)) {
+        sprintf("%.1f %s", max(x), measurement_info()$unit)
+      } else "—"
     })
     output$kpi_p95 <- shiny::renderText({
       x <- selected_values()
-      if (length(x)) sprintf("%.1f µg/m³", stats::quantile(x, 0.95)) else "—"
+      if (length(x)) {
+        sprintf(
+          "%.1f %s", stats::quantile(x, 0.95), measurement_info()$unit
+        )
+      } else "—"
     })
     output$kpi_spikes <- shiny::renderText({
       dates <- selected_dates()
@@ -612,37 +813,62 @@ tceq_dashboard_server <- function(
     })
 
     output$overview_daily_plot <- plotly::renderPlotly({
-      d <- filtered_daily()
+      d <- filtered_measurement_daily()
+      info <- measurement_info()
       shiny::validate(shiny::need(nrow(d), "No daily summaries in this period."))
       p <- plotly::plot_ly()
       p <- plotly::add_lines(
-        p, data = d, x = ~date, y = ~computed_daily_avg_ug_m3,
+        p, data = d, x = ~date, y = ~daily_average,
         name = "Daily average", line = list(color = "#16697A", width = 2),
         text = ~sprintf(
-          "%s<br>Average: %.1f µg/m³<br>Valid hours: %d",
-          date, computed_daily_avg_ug_m3, valid_hours
+          "%s<br>Average: %.1f %s<br>Valid hours: %d",
+          date, daily_average, info$unit, valid_hours
         ), hoverinfo = "text"
       )
       p <- plotly::add_lines(
-        p, data = d, x = ~date, y = ~computed_daily_max_ug_m3,
+        p, data = d, x = ~date, y = ~daily_maximum,
         name = "Daily maximum", line = list(color = "#D97706", width = 1.5),
         text = ~sprintf(
-          "%s<br>Maximum: %.1f µg/m³<br>Valid hours: %d",
-          date, computed_daily_max_ug_m3, valid_hours
+          "%s<br>Maximum: %.1f %s<br>Valid hours: %d",
+          date, daily_maximum, info$unit, valid_hours
         ), hoverinfo = "text"
       )
       p <- plotly::layout(
         p, xaxis = list(title = "Date"),
-        yaxis = list(title = "PM2.5 (µg/m³)", rangemode = "tozero"),
+        yaxis = list(
+          title = sprintf("%s (%s)", info$short_label, info$unit),
+          rangemode = if (isTRUE(info$zero_based)) "tozero" else "normal"
+        ),
         legend = list(orientation = "h", x = 0, y = 1.12),
         margin = list(t = 55)
       )
       tceq_dashboard_plot_config(p)
     })
 
+    output$overview_daily_title <- shiny::renderText({
+      paste(measurement_info()$short_label, "daily values in the selected period")
+    })
+    output$overview_method_note <- shiny::renderText({
+      if (identical(selected_measurement(), "pm25")) {
+        paste(
+          "Daily statistics are recalculated from the site composite.",
+          "PM2.5 event-eligible days require at least 18 valid hours."
+        )
+      } else {
+        paste(
+          measurement_info()$label,
+          "daily average and maximum are summaries of valid hourly values.",
+          "The PM2.5 event counts above do not change with this selection."
+        )
+      }
+    })
+
     heatmap_data <- shiny::reactive({
       dates <- selected_dates()
-      tceq_complete_heatmap(site_bundle()$hourly, dates[1], dates[2]) |>
+      info <- measurement_info()
+      tceq_complete_measurement_heatmap(
+        measurement_hourly(), dates[1], dates[2]
+      ) |>
         dplyr::mutate(
           date_label = factor(
             as.character(.data$date),
@@ -650,17 +876,18 @@ tceq_dashboard_server <- function(
           ),
           hour_label = factor(.data$hour_lstd, levels = sprintf("%02d:00", 0:23)),
           hover = sprintf(
-            "%s · %s site local time<br>PM2.5: %s<br>Selection: %s<br>Contributors: %s%s",
+            "%s · %s site local time<br>%s: %s<br>Selection: %s<br>Contributors: %s%s",
             .data$date, .data$hour_lstd,
+            info$short_label,
             ifelse(
-              is.finite(.data$composite_pm25_ug_m3),
-              sprintf("%.1f µg/m³", .data$composite_pm25_ug_m3), "missing"
+              is.finite(.data$display_value),
+              sprintf("%.1f %s", .data$display_value, info$unit), "missing"
             ),
             gsub("_", " ", .data$composite_selection),
-            dplyr::coalesce(as.character(.data$contributing_records), "0"),
+            dplyr::coalesce(as.character(.data$display_contributors), "0"),
             ifelse(
-              nzchar(.data$value_flag_summary),
-              paste0("<br>Flags: ", .data$value_flag_summary), ""
+              nzchar(.data$display_flag),
+              paste0("<br>Flags: ", .data$display_flag), ""
             )
           )
         )
@@ -668,20 +895,33 @@ tceq_dashboard_server <- function(
 
     output$heatmap_plot <- plotly::renderPlotly({
       h <- heatmap_data()
+      info <- measurement_info()
       adaptive <- isTRUE(input$adaptive_heatmap)
-      upper <- if (adaptive && any(is.finite(h$composite_pm25_ug_m3))) {
-        max(35, stats::quantile(h$composite_pm25_ug_m3, 0.99, na.rm = TRUE))
-      } else 50
+      finite <- h$display_value[is.finite(h$display_value)]
+      limits <- c(info$fixed_min, info$fixed_max)
+      if (adaptive && length(finite)) {
+        if (isTRUE(info$zero_based)) {
+          upper <- stats::quantile(finite, 0.99, na.rm = TRUE)
+          if (is.finite(info$adaptive_floor)) upper <- max(info$adaptive_floor, upper)
+          limits <- c(0, upper)
+        } else {
+          limits <- as.numeric(stats::quantile(finite, c(0.01, 0.99), na.rm = TRUE))
+          if (!all(is.finite(limits)) || diff(limits) <= 0) limits <- c(
+            info$fixed_min, info$fixed_max
+          )
+        }
+      }
       g <- ggplot2::ggplot(
         h, ggplot2::aes(
           x = .data$hour_label, y = .data$date_label,
-          fill = .data$composite_pm25_ug_m3, text = .data$hover
+          fill = .data$display_value, text = .data$hover
         )
       ) +
         ggplot2::geom_tile() +
         ggplot2::scale_fill_viridis_c(
-          option = "C", limits = c(0, upper), oob = scales::squish,
-          na.value = "#D1D5DB", name = "PM2.5\n(µg/m³)"
+          option = "C", limits = limits, oob = scales::squish,
+          na.value = "#D1D5DB",
+          name = paste0(info$short_label, "\n(", info$unit, ")")
         ) +
         ggplot2::scale_y_discrete(limits = rev) +
         ggplot2::labs(x = "Hour (site local time)", y = "Date") +
@@ -698,15 +938,24 @@ tceq_dashboard_server <- function(
 
     output$heatmap_caption <- shiny::renderText({
       dates <- selected_dates()
+      info <- measurement_info()
       scale_text <- if (isTRUE(input$adaptive_heatmap)) {
-        "Adaptive scale uses at least 35 µg/m³ and the selected period's 99th percentile."
+        "Adaptive scale uses the selected period's central range."
       } else {
-        "Fixed scale is capped visually at 50 µg/m³; hover shows uncapped values."
+        sprintf(
+          "Fixed scale spans %g–%g %s; hover shows uncapped values.",
+          info$fixed_min, info$fixed_max, info$unit
+        )
       }
       paste(
-        as.integer(dates[2] - dates[1]) + 1L, "days ·", scale_text,
+        as.integer(dates[2] - dates[1]) + 1L, "days ·",
+        info$short_label, "·", scale_text,
         "Gray cells are missing or quality-coded, not zero."
       )
+    })
+
+    output$heatmap_title <- shiny::renderText({
+      paste("Hourly", measurement_info()$short_label, "by date and hour")
     })
 
     output$event_table <- DT::renderDT({
@@ -921,13 +1170,14 @@ tceq_dashboard_server <- function(
     })
 
     output$diurnal_plot <- plotly::renderPlotly({
-      x <- site_bundle()$hourly |>
-        dplyr::filter(is.finite(.data$composite_pm25_ug_m3)) |>
+      info <- measurement_info()
+      x <- measurement_hourly() |>
+        dplyr::filter(is.finite(.data$display_value)) |>
         dplyr::group_by(.data$hour) |>
         dplyr::summarise(
-          q25 = stats::quantile(.data$composite_pm25_ug_m3, 0.25),
-          median = stats::median(.data$composite_pm25_ug_m3),
-          q75 = stats::quantile(.data$composite_pm25_ug_m3, 0.75),
+          q25 = stats::quantile(.data$display_value, 0.25),
+          median = stats::median(.data$display_value),
+          q75 = stats::quantile(.data$display_value, 0.75),
           .groups = "drop"
         )
       p <- plotly::plot_ly(x, x = ~hour)
@@ -938,26 +1188,33 @@ tceq_dashboard_server <- function(
       )
       p <- plotly::add_lines(
         p, y = ~median, name = "Median", line = list(color = "#16697A", width = 2.5),
-        text = ~sprintf("%02d:00 site local time<br>Median: %.1f µg/m³<br>IQR: %.1f–%.1f", hour, median, q25, q75),
+        text = ~sprintf(
+          "%02d:00 site local time<br>Median: %.1f %s<br>IQR: %.1f–%.1f",
+          hour, median, info$unit, q25, q75
+        ),
         hoverinfo = "text"
       )
       p <- plotly::layout(
         p, xaxis = list(title = "Hour (site local time)", dtick = 2),
-        yaxis = list(title = "PM2.5 (µg/m³)", rangemode = "tozero"),
+        yaxis = list(
+          title = sprintf("%s (%s)", info$short_label, info$unit),
+          rangemode = if (isTRUE(info$zero_based)) "tozero" else "normal"
+        ),
         legend = list(orientation = "h", x = 0, y = 1.12), margin = list(t = 55)
       )
       tceq_dashboard_plot_config(p)
     })
 
     output$seasonal_plot <- plotly::renderPlotly({
-      x <- site_bundle()$hourly |>
-        dplyr::filter(is.finite(.data$composite_pm25_ug_m3)) |>
+      info <- measurement_info()
+      x <- measurement_hourly() |>
+        dplyr::filter(is.finite(.data$display_value)) |>
         dplyr::mutate(month = as.integer(format(.data$date, "%m"))) |>
         dplyr::group_by(.data$month) |>
         dplyr::summarise(
-          q25 = stats::quantile(.data$composite_pm25_ug_m3, 0.25),
-          median = stats::median(.data$composite_pm25_ug_m3),
-          q75 = stats::quantile(.data$composite_pm25_ug_m3, 0.75), .groups = "drop"
+          q25 = stats::quantile(.data$display_value, 0.25),
+          median = stats::median(.data$display_value),
+          q75 = stats::quantile(.data$display_value, 0.75), .groups = "drop"
         )
       x$month_name <- factor(month.abb[x$month], levels = month.abb)
       p <- plotly::plot_ly(x, x = ~month_name)
@@ -968,36 +1225,60 @@ tceq_dashboard_server <- function(
       )
       p <- plotly::add_lines(
         p, y = ~median, name = "Median", line = list(color = "#D97706", width = 2.5),
-        text = ~sprintf("%s<br>Median: %.1f µg/m³<br>IQR: %.1f–%.1f", month_name, median, q25, q75),
+        text = ~sprintf(
+          "%s<br>Median: %.1f %s<br>IQR: %.1f–%.1f",
+          month_name, median, info$unit, q25, q75
+        ),
         hoverinfo = "text"
       )
       p <- plotly::layout(
         p, xaxis = list(title = "Month"),
-        yaxis = list(title = "PM2.5 (µg/m³)", rangemode = "tozero"),
+        yaxis = list(
+          title = sprintf("%s (%s)", info$short_label, info$unit),
+          rangemode = if (isTRUE(info$zero_based)) "tozero" else "normal"
+        ),
         legend = list(orientation = "h", x = 0, y = 1.12), margin = list(t = 55)
       )
       tceq_dashboard_plot_config(p)
     })
 
     output$long_term_plot <- plotly::renderPlotly({
-      d <- site_bundle()$daily
+      info <- measurement_info()
+      d <- measurement_daily()
       p <- plotly::plot_ly()
       p <- plotly::add_lines(
-        p, data = d, x = ~date, y = ~computed_daily_avg_ug_m3,
+        p, data = d, x = ~date, y = ~daily_average,
         name = "Daily average", line = list(color = "#16697A", width = 1),
-        hovertemplate = "%{x|%Y-%m-%d}<br>Average %{y:.1f} µg/m³<extra></extra>"
+        hovertemplate = paste0(
+          "%{x|%Y-%m-%d}<br>Average %{y:.1f} ", info$unit, "<extra></extra>"
+        )
       )
       p <- plotly::add_lines(
-        p, data = d, x = ~date, y = ~computed_daily_max_ug_m3,
+        p, data = d, x = ~date, y = ~daily_maximum,
         name = "Daily maximum", line = list(color = "#D97706", width = 0.8),
-        hovertemplate = "%{x|%Y-%m-%d}<br>Maximum %{y:.1f} µg/m³<extra></extra>"
+        hovertemplate = paste0(
+          "%{x|%Y-%m-%d}<br>Maximum %{y:.1f} ", info$unit, "<extra></extra>"
+        )
       )
       p <- plotly::layout(
         p, xaxis = list(title = "Date", rangeslider = list(visible = TRUE)),
-        yaxis = list(title = "PM2.5 (µg/m³)", rangemode = "tozero"),
+        yaxis = list(
+          title = sprintf("%s (%s)", info$short_label, info$unit),
+          rangemode = if (isTRUE(info$zero_based)) "tozero" else "normal"
+        ),
         legend = list(orientation = "h", x = 0, y = 1.12), margin = list(t = 55)
       )
       tceq_dashboard_plot_config(p)
+    })
+
+    output$diurnal_title <- shiny::renderText({
+      paste("Typical", measurement_info()$short_label, "by hour")
+    })
+    output$seasonal_title <- shiny::renderText({
+      paste("Typical", measurement_info()$short_label, "by month")
+    })
+    output$long_term_title <- shiny::renderText({
+      paste(measurement_info()$short_label, "full site history")
     })
 
     yearly_quality <- shiny::reactive(tceq_dashboard_yearly_quality(site_bundle()))
@@ -2085,10 +2366,29 @@ tceq_dashboard_server <- function(
 
     output$download_hourly <- shiny::downloadHandler(
       filename = function() paste0(
-        selected_site(), "_pm25_", selected_dates()[1], "_", selected_dates()[2], ".csv"
+        selected_site(), "_", selected_measurement(), "_",
+        selected_dates()[1], "_", selected_dates()[2], ".csv"
       ),
       content = function(file) {
-        readr::write_csv(filtered_hourly(), file, na = "")
+        info <- measurement_info()
+        export <- filtered_measurement_hourly() |>
+          dplyr::transmute(
+            aqs_site_id = selected_site(),
+            data_source = site_record()$data_source,
+            date = .data$date,
+            hour = .data$hour,
+            hour_local = .data$hour_lstd,
+            datetime_local = .data$datetime_lstd,
+            datetime_utc = .data$datetime_utc,
+            measurement = selected_measurement(),
+            measurement_label = info$label,
+            unit = info$unit,
+            value = .data$display_value,
+            contributing_records = .data$display_contributors,
+            quality_flags = .data$display_flag,
+            composite_selection = .data$composite_selection
+          )
+        readr::write_csv(export, file, na = "")
       }
     )
     output$download_events <- shiny::downloadHandler(

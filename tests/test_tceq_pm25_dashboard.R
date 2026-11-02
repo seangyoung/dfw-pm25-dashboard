@@ -75,6 +75,63 @@ stopifnot(
   !parameter_composite$qa_fallback[parameter_composite$hour == 1L]
 )
 
+# Supplemental TCEQ measurements retain parameter-specific units and QA
+# preference. Negative pollutant values are flags, while below-freezing
+# temperature values remain valid before conversion from Fahrenheit to Celsius.
+supplemental_clean_gas <- tceq_clean_supplemental_measurement(
+  c("12", "-1", "QAS"), "42602"
+)
+supplemental_clean_temperature <- tceq_clean_supplemental_measurement(
+  c("32", "-4"), "62101"
+)
+supplemental_temperature_sd <- tceq_clean_supplemental_measurement(
+  "9", "62101", temperature_difference = TRUE
+)
+supplemental_out_of_range <- dplyr::bind_rows(
+  tceq_clean_supplemental_measurement(c("-40", "141"), "62101"),
+  tceq_clean_supplemental_measurement("101", "62201")
+)
+stopifnot(nrow(load_tceq_dfw_supplemental(tempdir(), character())) == 0L)
+stopifnot(
+  supplemental_clean_gas$normalized_value[1] == 12,
+  is.na(supplemental_clean_gas$normalized_value[2]),
+  supplemental_clean_gas$flag[2] == "NEG",
+  supplemental_clean_gas$flag[3] == "QAS",
+  supplemental_clean_temperature$normalized_value[1] == 0,
+  abs(supplemental_clean_temperature$normalized_value[2] + 20) < 1e-8,
+  supplemental_temperature_sd$normalized_value == 5,
+  all(is.na(supplemental_out_of_range$normalized_value)),
+  all(supplemental_out_of_range$flag == "OUT_OF_RANGE")
+)
+supplemental_raw_test <- tibble::tibble(
+  aqs_site_id = "48_113_0069", site_name = "Dallas Hinton St.",
+  date = as.Date("2024-01-01"), hour = c(0L, 0L, 1L),
+  hour_lstd = c("00:00", "00:00", "01:00"),
+  datetime_lstd = tceq_lstd_datetime(
+    as.Date("2024-01-01"), c(0L, 0L, 1L)
+  ),
+  parameter_code = c("42602", "42602", "62101"),
+  measurement_value = c(10, 100, 20), value_flag = NA_character_,
+  regulatory_qa = c(TRUE, FALSE, NA)
+)
+supplemental_hourly_test <- tceq_build_supplemental_hourly(
+  supplemental_raw_test
+)
+stopifnot(
+  supplemental_hourly_test$composite_no2_ppb[
+    supplemental_hourly_test$hour == 0L
+  ] == 10,
+  supplemental_hourly_test$no2_contributing_records[
+    supplemental_hourly_test$hour == 0L
+  ] == 1L,
+  supplemental_hourly_test$composite_temperature_c[
+    supplemental_hourly_test$hour == 1L
+  ] == 20,
+  supplemental_hourly_test$tceq_temperature_qa_status_unavailable[
+    supplemental_hourly_test$hour == 1L
+  ]
+)
+
 make_hourly_test <- function(values, start = "2024-01-01 00:00:00") {
   datetime <- as.POSIXct(start, tz = "UTC") + seq_along(values) * 3600 - 3600
   tibble::tibble(
@@ -400,6 +457,23 @@ stopifnot(
     c("Central: 2024-07-01 13:00 CDT", "UTC: 2024-07-01 18:00 UTC")
   )
 )
+measurement_catalog <- tceq_dashboard_measurement_catalog()
+stopifnot(identical(
+  measurement_catalog$key,
+  c("pm25", "pm10", "no2", "o3", "temperature", "humidity")
+))
+tceq_supplemental_display <- tceq_dashboard_measurement_hourly(
+  list(
+    metadata = tibble::tibble(data_source = "TCEQ"),
+    hourly = supplemental_hourly_test
+  ),
+  "no2"
+)
+stopifnot(
+  tceq_supplemental_display$composite_selection[
+    tceq_supplemental_display$hour == 0L
+  ] == "tceq_regulatory_qa_preferred"
+)
 window_bounds <- as.Date(c("2024-01-01", "2024-06-30"))
 latest_30 <- tceq_dashboard_window_dates(
   window_bounds[1], window_bounds[2], 30L, window_bounds[2]
@@ -427,6 +501,22 @@ stopifnot(
 )
 server_hourly_a <- make_hourly_test(c(40, 41, rep(10, 46)))
 server_hourly_b <- make_hourly_test(rep(12, 48))
+server_hourly_b$composite_pm10_ug_m3 <- seq(20, 67)
+server_hourly_b$pm10_flag_summary <- ""
+server_hourly_b$pm10_contributing_records <- 1L
+server_hourly_b$composite_no2_ppb <- seq(5, 52)
+server_hourly_b$no2_flag_summary <- ""
+server_hourly_b$no2_contributing_records <- 1L
+server_hourly_b$composite_o3_ppb <- seq(10, 57)
+server_hourly_b$o3_flag_summary <- ""
+server_hourly_b$o3_contributing_records <- 1L
+server_hourly_b$composite_temperature_c <- rep(25, 48)
+server_hourly_b$temperature_flag_summary <- ""
+server_hourly_b$temperature_contributing_records <- 1L
+server_hourly_b$composite_relative_humidity_percent <- rep(50, 48)
+server_hourly_b$humidity_flag_summary <- ""
+server_hourly_b$humidity_contributing_records <- 1L
+server_hourly_b$composite_pm10_ug_m3[1:24] <- NA_real_
 make_server_bundle <- function(site_id, hourly) {
   hourly$aqs_site_id <- site_id
   daily <- hourly |>
@@ -463,6 +553,10 @@ server_bundles <- list(
   site_a = make_server_bundle("site_a", server_hourly_a),
   site_b = make_server_bundle("site_b", server_hourly_b)
 )
+stopifnot(identical(
+  tceq_dashboard_date_bounds(server_bundles$site_b, "pm10"),
+  as.Date(c("2024-01-02", "2024-01-02"))
+))
 server_stations <- tibble::tibble(
   aqs_site_id = c("site_a", "site_b"), site_name = c("A site", "B site"),
   active = c(TRUE, TRUE), last_date = as.Date(c("2024-01-02", "2024-01-02")),
@@ -492,10 +586,24 @@ shiny::testServer(
     stopifnot(nrow(available_stations()) == 2L)
     session$setInputs(site = "site_b")
     session$flushReact()
-    stopifnot(selected_site() == "site_b", nrow(filtered_hourly()) == 48L)
+    stopifnot(
+      selected_site() == "site_b", nrow(filtered_hourly()) == 48L,
+      identical(supported_measurements()$key, measurement_catalog$key)
+    )
+    session$setInputs(measurement = "pm10")
+    session$flushReact()
+    stopifnot(
+      selected_measurement() == "pm10",
+      measurement_info()$unit == "µg/m³",
+      nrow(measurement_daily()) == 2L,
+      max(filtered_measurement_hourly()$display_value) == 67
+    )
     session$setInputs(site_map_marker_click = list(id = "site_a"))
     session$flushReact()
-    stopifnot(selected_site() == "site_a", nrow(site_events()) == 1L)
+    stopifnot(
+      selected_site() == "site_a", nrow(site_events()) == 1L,
+      selected_measurement() == "pm25"
+    )
     session$setInputs(event_type = "multi_day")
     session$flushReact()
     stopifnot(nrow(site_events()) == 0L)

@@ -343,6 +343,7 @@ ui <- bslib::page_sidebar(
         "site", "Monitoring site", choices = site_choices, selected = default_site
       ),
       shiny::uiOutput("site_details"),
+      shiny::uiOutput("measurement_control"),
       leaflet::leafletOutput("site_map", height = 310),
       shiny::tags$label(
         class = "date-window-label", `for` = "date_window_days", "Date window"
@@ -379,7 +380,7 @@ ui <- bslib::page_sidebar(
       shiny::uiOutput("cache_status"),
       shiny::div(
         class = "download-row",
-        shiny::downloadButton("download_hourly", "Download visible hours"),
+        shiny::downloadButton("download_hourly", "Download visible measurement"),
         shiny::downloadButton("download_events", "Download site events")
       )
     ),
@@ -504,17 +505,19 @@ ui <- bslib::page_sidebar(
         metric_box("Latest valid date", "kpi_latest"),
         metric_box("Maximum", "kpi_max"),
         metric_box("95th percentile", "kpi_p95"),
-        metric_box("Short spikes", "kpi_spikes"),
-        metric_box("Multi-day events", "kpi_multiday")
+        metric_box("PM2.5 spikes", "kpi_spikes"),
+        metric_box("PM2.5 MDPEs", "kpi_multiday")
       ),
       bslib::card(
         full_screen = TRUE,
-        bslib::card_header("Daily PM2.5 in the selected period"),
+        bslib::card_header(
+          shiny::textOutput("overview_daily_title", inline = TRUE)
+        ),
         plotly::plotlyOutput("overview_daily_plot", height = "480px")
       ),
       shiny::p(
         class = "method-note",
-        "Daily statistics are recalculated from the site composite. Event-eligible days require at least 18 valid hours."
+        shiny::textOutput("overview_method_note", inline = TRUE)
       )
     ),
     bslib::nav_panel(
@@ -527,7 +530,7 @@ ui <- bslib::page_sidebar(
       ),
       bslib::card(
         full_screen = TRUE,
-        bslib::card_header("Hourly PM2.5 by date and hour"),
+        bslib::card_header(shiny::textOutput("heatmap_title", inline = TRUE)),
         plotly::plotlyOutput("heatmap_plot", height = "700px")
       ),
       shiny::p(class = "method-note", shiny::textOutput("heatmap_caption", inline = TRUE))
@@ -676,18 +679,18 @@ ui <- bslib::page_sidebar(
         col_widths = c(6, 6),
         bslib::card(
           full_screen = TRUE,
-          bslib::card_header("Typical PM2.5 by hour"),
+          bslib::card_header(shiny::textOutput("diurnal_title", inline = TRUE)),
           plotly::plotlyOutput("diurnal_plot", height = "390px")
         ),
         bslib::card(
           full_screen = TRUE,
-          bslib::card_header("Typical PM2.5 by month"),
+          bslib::card_header(shiny::textOutput("seasonal_title", inline = TRUE)),
           plotly::plotlyOutput("seasonal_plot", height = "390px")
         )
       ),
       bslib::card(
         full_screen = TRUE,
-        bslib::card_header("Full site history"),
+        bslib::card_header(shiny::textOutput("long_term_title", inline = TRUE)),
         plotly::plotlyOutput("long_term_plot", height = "500px")
       )
     ),
@@ -698,12 +701,12 @@ ui <- bslib::page_sidebar(
         col_widths = c(8, 4),
         bslib::card(
           full_screen = TRUE,
-          bslib::card_header("Annual coverage and composite source"),
+          bslib::card_header("Annual PM2.5 coverage and composite source"),
           plotly::plotlyOutput("quality_plot", height = "430px")
         ),
         bslib::card(
           full_screen = TRUE,
-          bslib::card_header("Raw hourly quality flags"),
+          bslib::card_header("Raw PM2.5 hourly quality flags"),
           DT::DTOutput("flag_table")
         )
       ),

@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-10-12 14:34:24 UTC",
+  "generated_at_utc": "2026-10-31 00:45:33 UTC",
   "station_count": 49,
-  "first_date": "2000-01-01",
+  "first_date": "1997-08-01",
   "last_date": "2026-09-30",
-  "source_cache_manifest_sha256": "3d8ebb3aaf8c8cb3b30df83486a4f2f421100b3cd2eaf2239b29d51b927b3f41",
+  "source_cache_manifest_sha256": "e61d48fc9ef660ddd79ba6edfb6555dda6c993acce64be3af06c085db9c84822",
   "source_manifest_sha256": {
-    "tceq_download_manifest": "9180fca065933ed683708e05d0c931a9da80da0854abc22ecdd937f25f077a05",
+    "tceq_download_manifest": "b2367d9a7b1a7d75d7e07fa4d94270ca27f28cdfdb2a0740915333e307921be9",
     "dallas_aqmesh_download_manifest": "22f4603a5c471e76e1f554be2f8e70f505b7e7cf562ef02e8564448d08b81f38"
   },
   "data_classification": "Public TCEQ ambient-air monitoring data and public City of Dallas AQMesh community-sensor data",

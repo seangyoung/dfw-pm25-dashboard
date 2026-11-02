@@ -155,18 +155,61 @@ copy_cache_snapshot <- function(from, to) {
     portable_stations, file.path(temporary, "station_index.rds"),
     compress = "gzip"
   )
-  tceq_raw_manifest <- file.path(
-    root, "data", "raw", "tceq_dfw_pm25_monthly", "download_manifest.csv"
-  )
+  first_existing <- function(paths) {
+    paths <- unique(paths[!is.na(paths) & nzchar(paths)])
+    available <- paths[file.exists(paths)]
+    if (length(available)) available[[1]] else NA_character_
+  }
+  tceq_source_manifest <- NA_character_
+  tceq_source_cache <- source_manifest$tceq$source_cache
+  if (!is.null(tceq_source_cache) && dir.exists(tceq_source_cache)) {
+    tceq_cache_manifest <- file.path(tceq_source_cache, "cache_manifest.json")
+    if (file.exists(tceq_cache_manifest)) {
+      tceq_source_manifest <- jsonlite::read_json(
+        tceq_cache_manifest, simplifyVector = TRUE
+      )$raw_manifest_path
+    }
+  }
+  tceq_raw_manifest <- first_existing(c(
+    file.path(
+      root, "data", "raw", "tceq_dfw_pm25_monthly", "download_manifest.csv"
+    ),
+    tceq_source_manifest,
+    file.path(to, "tceq_download_manifest.csv")
+  ))
   require_packages("yaml")
-  dallas_raw_manifest <- file.path(
-    aqmesh_raw_dir(read_config()), "download_manifest.csv"
-  )
+  dallas_source_manifest <- NA_character_
+  dallas_source_import <- source_manifest$dallas_aqmesh$source_import
+  if (!is.null(dallas_source_import) && dir.exists(dallas_source_import)) {
+    import_metadata <- file.path(dallas_source_import, "import_metadata.json")
+    if (file.exists(import_metadata)) {
+      dallas_raw_dir <- jsonlite::read_json(
+        import_metadata, simplifyVector = TRUE
+      )$raw_dir
+      dallas_source_manifest <- file.path(dallas_raw_dir, "download_manifest.csv")
+    }
+  }
+  dallas_raw_manifest <- first_existing(c(
+    file.path(aqmesh_raw_dir(read_config()), "download_manifest.csv"),
+    dallas_source_manifest,
+    file.path(to, "dallas_aqmesh_download_manifest.csv")
+  ))
   provenance <- c(
     tceq_download_manifest = tceq_raw_manifest,
     dallas_aqmesh_download_manifest = dallas_raw_manifest
   )
-  provenance <- provenance[file.exists(provenance)]
+  if (anyNA(provenance)) {
+    stop("Could not locate both raw download manifests for the deployment snapshot.")
+  }
+  expected_hashes <- c(
+    tceq_download_manifest = source_manifest$tceq$raw_manifest_sha256,
+    dallas_aqmesh_download_manifest =
+      source_manifest$dallas_aqmesh$raw_download_manifest_sha256
+  )
+  actual_hashes <- vapply(provenance, sha256_file, character(1))
+  if (!identical(unname(actual_hashes), unname(expected_hashes))) {
+    stop("Raw download manifest hashes do not match the prepared cache manifest.")
+  }
   for (name in names(provenance)) {
     destination <- file.path(temporary, paste0(name, ".csv"))
     if (!file.copy(provenance[[name]], destination)) {

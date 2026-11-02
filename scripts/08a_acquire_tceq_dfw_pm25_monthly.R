@@ -1,9 +1,11 @@
 #!/usr/bin/env Rscript
 
-# Acquire monthly, hourly TCEQ PM2.5 reports for every CAMS monitor listed in
-# the Dallas-Fort Worth region. The TCEQ "comma-delimited" response is CSV text
-# embedded in an HTML <pre> element, so this script extracts that report text
-# without changing its values and records a request-level manifest.
+# Acquire monthly, hourly TCEQ reports for the dashboard's DFW PM2.5 sites.
+# PM2.5 plus the matching AQMesh measurements (PM10, NO2, O3, temperature, and
+# relative humidity) are retained as separate parameter streams. The TCEQ
+# "comma-delimited" response is CSV text embedded in an HTML <pre> element, so
+# this script extracts the report text without changing its values and records
+# a request-level manifest.
 
 script_path <- sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)[1])
 script_dir <- dirname(normalizePath(script_path))
@@ -25,13 +27,15 @@ parameter_arg <- grep("^--parameters=", args, value = TRUE)
 parameter_codes <- if (length(parameter_arg)) {
   strsplit(sub("^--parameters=", "", parameter_arg[1]), ",", fixed = TRUE)[[1]]
 } else {
-  c("88101", "88502")
+  c("88101", "88502", "81102", "42602", "44201", "62101", "62201")
 }
 parameter_codes <- unique(trimws(parameter_codes))
-supported_parameter_codes <- c("88101", "88502")
+pm25_parameter_codes <- c("88101", "88502")
+supplemental_parameter_codes <- c("81102", "42602", "44201", "62101", "62201")
+supported_parameter_codes <- c(pm25_parameter_codes, supplemental_parameter_codes)
 if (!length(parameter_codes) || any(!parameter_codes %in% supported_parameter_codes)) {
   stop(
-    "--parameters must contain one or both of: ",
+    "--parameters must contain one or more of: ",
     paste(supported_parameter_codes, collapse = ", "), "."
   )
 }
@@ -42,6 +46,18 @@ request_delay <- if (length(delay_arg)) {
   0.10
 }
 if (!is.finite(request_delay) || request_delay < 0) stop("--delay must be non-negative.")
+workers_arg <- grep("^--workers=", args, value = TRUE)
+workers <- if (length(workers_arg)) {
+  as.integer(sub("^--workers=", "", workers_arg[1]))
+} else if (.Platform$OS.type == "windows") {
+  1L
+} else {
+  detected_cores <- suppressWarnings(parallel::detectCores(logical = FALSE))
+  if (is.na(detected_cores)) 2L else min(4L, detected_cores)
+}
+if (length(workers) != 1L || is.na(workers) || workers < 1L || workers > 8L) {
+  stop("--workers must be an integer from 1 through 8.")
+}
 
 tceq_url <- "https://www.tceq.texas.gov/cgi-bin/compliance/monops/monthly_summary.pl"
 output_root <- file.path(repo_root, "data", "raw", "tceq_dfw_pm25_monthly")
@@ -66,7 +82,7 @@ fetch_tceq <- function(fields = NULL, attempts = 4L) {
   for (attempt in seq_len(attempts)) {
     result <- tryCatch({
       handle <- curl::new_handle(
-        useragent = "TX_FireHealth TCEQ PM2.5 research download",
+        useragent = "TX_FireHealth TCEQ multi-parameter research download",
         followlocation = TRUE,
         connecttimeout = 30,
         timeout = 120
@@ -155,7 +171,7 @@ parse_availability <- function(html, parameter_code) {
     label, perl = TRUE
   )
   captured <- regmatches(label, match)[[1]]
-  if (length(captured) < 3L) stop("Could not parse PM2.5 availability text: ", label)
+  if (length(captured) < 3L) stop("Could not parse parameter availability text: ", label)
   list(
     availability_text = label,
     first_month = as.Date(paste0("01 ", captured[2]), format = "%d %b %Y"),
@@ -184,13 +200,13 @@ discover_site_availability <- function(site, complete_month, parameter_code) {
     html <- fetch_tceq(month_fields(site$site_option, probe_month, submitted = "0"))
     availability <- parse_availability(html, parameter_code)
     if (!is.null(availability)) {
-      return(c(availability, list(probe_month = probe_month, discovery_status = "pm25_available")))
+      return(c(availability, list(probe_month = probe_month, discovery_status = "parameter_available")))
     }
   }
   list(
     availability_text = NA_character_, first_month = as.Date(NA),
     last_month = as.Date(NA), probe_month = as.Date(NA),
-    discovery_status = "no_pm25_parameter_found"
+    discovery_status = "parameter_not_found"
   )
 }
 
@@ -248,18 +264,31 @@ inventory_path <- file.path(output_root, "dfw_site_inventory.csv")
 if (reuse_inventory && file.exists(inventory_path)) {
   message("Reusing existing TCEQ site inventory: ", inventory_path)
   sites <- data.table::fread(inventory_path, colClasses = list(character = "cams_id"))
-  date_columns <- intersect(
-    c("deactivated_date", "first_month", "tceq_last_month", "download_last_month", "probe_month"),
-    names(sites)
-  )
-  for (column in date_columns) sites[, (column) := as.Date(get(column))]
 } else {
   sites <- parse_dfw_sites(fetch_tceq())
+  if (file.exists(inventory_path)) {
+    prior_inventory <- data.table::fread(
+      inventory_path, colClasses = list(character = "cams_id")
+    )
+    keys <- c("cams_id", "aqs_site_id")
+    retained <- setdiff(names(prior_inventory), names(sites))
+    if (length(retained)) {
+      sites <- merge(
+        sites, prior_inventory[, c(keys, retained), with = FALSE],
+        by = keys, all.x = TRUE, sort = FALSE
+      )
+    }
+  }
 }
+date_columns <- grep(
+  "^(deactivated_date|(first_month|tceq_last_month|download_last_month|probe_month)(_[0-9]+)?)$",
+  names(sites), value = TRUE
+)
+for (column in date_columns) sites[, (column) := as.Date(get(column))]
 
 # Preserve the original 88101 inventory columns while adding explicit columns
-# for both PM2.5 parameter streams. This makes an existing inventory reusable
-# without hiding which parameter was discovered at a CAMS alias.
+# for every dashboard parameter stream. This makes an existing inventory
+# reusable without hiding which parameter was discovered at a CAMS alias.
 legacy_columns <- c(
   availability_text = "availability_text", first_month = "first_month",
   tceq_last_month = "tceq_last_month", download_last_month = "download_last_month",
@@ -280,9 +309,22 @@ for (parameter_code in supported_parameter_codes) {
   }
 }
 
-for (parameter_code in parameter_codes) {
+discovery_order <- unique(c(
+  intersect(pm25_parameter_codes, parameter_codes),
+  setdiff(parameter_codes, pm25_parameter_codes)
+))
+for (parameter_code in discovery_order) {
   status_column <- parameter_column("discovery_status", parameter_code)
   unresolved <- which(is.na(sites[[status_column]]) | !nzchar(sites[[status_column]]))
+  if (parameter_code %in% supplemental_parameter_codes) {
+    pm25_sites <- unique(sites$aqs_site_id[
+      sites[[parameter_column("discovery_status", "88101")]] %in%
+        c("pm25_available", "parameter_available") |
+      sites[[parameter_column("discovery_status", "88502")]] %in%
+        c("pm25_available", "parameter_available")
+    ])
+    unresolved <- unresolved[sites$aqs_site_id[unresolved] %in% pm25_sites]
+  }
   if (length(unresolved)) {
     message(
       "Checking parameter ", parameter_code, " availability for ",
@@ -308,12 +350,20 @@ for (parameter_code in parameter_codes) {
   }
 }
 
+pm25_site_ids <- unique(sites$aqs_site_id[
+  sites[[parameter_column("discovery_status", "88101")]] %in%
+    c("pm25_available", "parameter_available") |
+  sites[[parameter_column("discovery_status", "88502")]] %in%
+    c("pm25_available", "parameter_available")
+])
 eligible_by_parameter <- lapply(supported_parameter_codes, function(parameter_code) {
   first_column <- parameter_column("first_month", parameter_code)
   last_column <- parameter_column("download_last_month", parameter_code)
   status_column <- parameter_column("discovery_status", parameter_code)
   result <- sites[
-    get(status_column) == "pm25_available" & get(first_column) <= get(last_column)
+    aqs_site_id %in% pm25_site_ids &
+      get(status_column) %in% c("pm25_available", "parameter_available") &
+      get(first_column) <= get(last_column)
   ]
   result[, `:=`(
     parameter_code = parameter_code,
@@ -331,7 +381,7 @@ data.table::setorder(eligible_cams, parameter_code, aqs_site_id, cams_numeric)
 # the lowest-numbered CAMS entry once per EPA/AQS site and retain all aliases in
 # the inventory for auditability.
 all_streams <- eligible_cams[, .SD[1L], by = c("parameter_code", "aqs_site_id")]
-pm_streams <- all_streams[parameter_code %in% parameter_codes]
+selected_streams <- all_streams[parameter_code %in% parameter_codes]
 for (code in supported_parameter_codes) {
   chosen <- all_streams[get("parameter_code") == code]
   canonical <- setNames(chosen$cams_id, chosen$aqs_site_id)
@@ -340,7 +390,10 @@ for (code in supported_parameter_codes) {
           !is.na(get(parameter_column("canonical_cams_id", code))) &
           cams_id == get(parameter_column("canonical_cams_id", code))]
 }
-physical_sites <- all_streams[, .SD[which.min(as.integer(cams_id))], by = aqs_site_id]
+physical_sites <- all_streams[
+  parameter_code %in% pm25_parameter_codes,
+  .SD[which.min(as.integer(cams_id))], by = aqs_site_id
+]
 canonical_cams <- setNames(physical_sites$cams_id, physical_sites$aqs_site_id)
 sites[, canonical_cams_id := unname(canonical_cams[aqs_site_id])]
 sites[, download_selected := !is.na(canonical_cams_id) & cams_id == canonical_cams_id]
@@ -361,7 +414,7 @@ data.table::fwrite(sites, inventory_path, na = "")
 message(
   "Found ", data.table::uniqueN(all_streams$aqs_site_id),
   " physical DFW PM2.5 monitoring locations; processing ",
-  nrow(pm_streams), " of ", nrow(all_streams), " site-parameter streams (",
+  nrow(selected_streams), " of ", nrow(all_streams), " site-parameter streams (",
   nrow(eligible_cams), " eligible CAMS aliases)."
 )
 
@@ -370,12 +423,6 @@ if (inventory_only) {
   quit(save = "no", status = 0L)
 }
 
-manifest_rows <- list()
-row_index <- 0L
-download_count <- 0L
-skip_count <- 0L
-no_data_count <- 0L
-error_count <- 0L
 manifest_path <- file.path(output_root, "download_manifest.csv")
 prior_manifest <- if (file.exists(manifest_path)) {
   data.table::fread(manifest_path, colClasses = list(character = c("cams_id", "parameter_code")))
@@ -383,8 +430,14 @@ prior_manifest <- if (file.exists(manifest_path)) {
   data.table::data.table()
 }
 
-for (site_index in seq_len(nrow(pm_streams))) {
-  site <- pm_streams[site_index]
+process_stream <- function(site_index) {
+  manifest_rows <- list()
+  row_index <- 0L
+  download_count <- 0L
+  skip_count <- 0L
+  no_data_count <- 0L
+  error_count <- 0L
+  site <- selected_streams[site_index]
   parameter_code <- site$parameter_code
   months <- seq(site$parameter_first_month, site$parameter_last_month, by = "month")
   site_dir <- file.path(output_root, sprintf("cams_%04d", as.integer(site$cams_id)))
@@ -399,10 +452,17 @@ for (site_index in seq_len(nrow(pm_streams))) {
     month <- as.Date(month, origin = "1970-01-01")
     coded_relative_path <- file.path(
       sprintf("cams_%04d", as.integer(site$cams_id)),
-      sprintf(
-        "cams_%04d_%s_%s_pm25.csv", as.integer(site$cams_id),
-        format(month, "%Y-%m"), parameter_code
-      )
+      if (parameter_code %in% pm25_parameter_codes) {
+        sprintf(
+          "cams_%04d_%s_%s_pm25.csv", as.integer(site$cams_id),
+          format(month, "%Y-%m"), parameter_code
+        )
+      } else {
+        sprintf(
+          "cams_%04d_%s_%s.csv", as.integer(site$cams_id),
+          format(month, "%Y-%m"), parameter_code
+        )
+      }
     )
     legacy_relative_path <- file.path(
       sprintf("cams_%04d", as.integer(site$cams_id)),
@@ -490,11 +550,43 @@ for (site_index in seq_len(nrow(pm_streams))) {
       status = status,
       error_message = error_message
     )
-    if (row_index %% 50L == 0L) message("  processed ", row_index, " monthly requests")
+    if (row_index %% 50L == 0L) {
+      message(
+        "  CAMS ", site$cams_id, " parameter ", parameter_code,
+        ": processed ", row_index, " monthly requests"
+      )
+    }
   }
+  list(
+    manifest = data.table::rbindlist(manifest_rows, fill = TRUE),
+    downloaded = download_count, existing = skip_count,
+    no_data = no_data_count, errors = error_count
+  )
 }
 
-manifest <- data.table::rbindlist(manifest_rows, fill = TRUE)
+message("Downloading with ", workers, " bounded worker", if (workers == 1L) "" else "s", ".")
+stream_results <- if (workers == 1L) {
+  lapply(seq_len(nrow(selected_streams)), process_stream)
+} else {
+  parallel::mclapply(
+    seq_len(nrow(selected_streams)), process_stream,
+    mc.cores = workers, mc.preschedule = FALSE
+  )
+}
+worker_failed <- vapply(stream_results, inherits, logical(1), what = "try-error")
+if (any(worker_failed)) {
+  stop(
+    "TCEQ download worker failure: ",
+    paste(as.character(stream_results[worker_failed]), collapse = " | ")
+  )
+}
+manifest <- data.table::rbindlist(
+  lapply(stream_results, `[[`, "manifest"), fill = TRUE
+)
+download_count <- sum(vapply(stream_results, `[[`, numeric(1), "downloaded"))
+skip_count <- sum(vapply(stream_results, `[[`, numeric(1), "existing"))
+no_data_count <- sum(vapply(stream_results, `[[`, numeric(1), "no_data"))
+error_count <- sum(vapply(stream_results, `[[`, numeric(1), "errors"))
 if (nrow(prior_manifest) && !setequal(parameter_codes, supported_parameter_codes)) {
   manifest <- data.table::rbindlist(list(
     prior_manifest[!parameter_code %in% parameter_codes], manifest
@@ -507,9 +599,9 @@ summary <- data.table::data.table(
   generated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
   latest_complete_month = format(complete_month, "%Y-%m"),
   dfw_cams_entries = nrow(sites),
-  pm25_cams_menu_entries = data.table::uniqueN(eligible_cams[, .(cams_id, aqs_site_id)]),
+  dashboard_cams_menu_entries = data.table::uniqueN(eligible_cams[, .(cams_id, aqs_site_id)]),
   pm25_monitoring_locations = data.table::uniqueN(all_streams$aqs_site_id),
-  pm25_site_parameter_streams = nrow(all_streams),
+  dashboard_site_parameter_streams = nrow(all_streams),
   monthly_requests = nrow(manifest),
   downloaded = download_count,
   existing = skip_count,

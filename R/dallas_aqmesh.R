@@ -65,6 +65,50 @@ aqmesh_normalize_status <- function(x) {
   value
 }
 
+aqmesh_measurement_flag <- function(
+    value, reading_status, minimum = 0, maximum = Inf,
+    units = NULL, allowed_units = NULL, state = NULL) {
+  raw <- suppressWarnings(as.numeric(value))
+  status <- aqmesh_normalize_status(reading_status)
+  excluded_status <- status %in% c(
+    "deliq", "deliquescence", "other fault zero"
+  )
+  invalid_unit <- if (is.null(allowed_units)) {
+    rep(FALSE, length(raw))
+  } else {
+    unit <- trimws(as.character(units))
+    is.na(unit) | !unit %in% allowed_units
+  }
+  invalid_state <- if (is.null(state)) {
+    rep(FALSE, length(raw))
+  } else {
+    state_value <- tolower(trimws(as.character(state)))
+    !is.na(state_value) & nzchar(state_value) & state_value != "reading"
+  }
+  dplyr::case_when(
+    is.finite(raw) & raw <= -900 ~ "SENTINEL",
+    !is.finite(raw) ~ "MISSING",
+    excluded_status ~ paste0("STATUS_", toupper(gsub(" ", "_", status))),
+    invalid_unit ~ paste0(
+      "UNIT_", toupper(gsub("[^A-Za-z0-9]+", "_", dplyr::coalesce(
+        trimws(as.character(units)), "MISSING"
+      )))
+    ),
+    invalid_state ~ paste0(
+      "STATE_", toupper(gsub("[^A-Za-z0-9]+", "_", trimws(as.character(state))))
+    ),
+    raw < minimum ~ if (minimum == 0) "NEG" else "OUT_OF_RANGE_LOW",
+    raw > maximum ~ "OUT_OF_RANGE_HIGH",
+    TRUE ~ NA_character_
+  )
+}
+
+aqmesh_valid_measurement <- function(value, flag, transform = identity) {
+  raw <- suppressWarnings(as.numeric(value))
+  cleaned <- transform(raw)
+  dplyr::if_else(is.na(flag) & is.finite(cleaned), cleaned, NA_real_)
+}
+
 aqmesh_canonical_location <- function(x) {
   value <- trimws(gsub("[[:space:]]+", " ", as.character(x)))
   aliases <- c(
@@ -155,7 +199,9 @@ aqmesh_clean_latest_records <- function(records) {
   required <- c(
     "OBJECTID", "location_name", "pod_serial_number",
     "project_time_interval_start", "project_time_interval_end", "append_date",
-    "pm2_5_prescale", "pm2_5_scaled", "reading_status", "particleprotocol_version",
+    "pm2_5_prescale", "pm2_5_scaled", "pm10_scaled",
+    "no2_scaled", "no2_units", "no2_state", "o3_scaled", "o3_units",
+    "humidity", "temperature_f", "reading_status", "particleprotocol_version",
     "pod_latitude", "pod_longitude"
   )
   tceq_assert_columns(records, required, "Latest Dallas AQMesh records")
@@ -193,6 +239,43 @@ aqmesh_clean_latest_records <- function(records) {
         ),
       pm25_ug_m3 = dplyr::if_else(
         .data$valid_pm25, .data$pm25_scaled_raw, NA_real_
+      ),
+      pm10_raw = suppressWarnings(as.numeric(.data$pm10_scaled)),
+      pm10_flag = aqmesh_measurement_flag(
+        .data$pm10_raw, .data$reading_status_normalized,
+        minimum = 0, maximum = 5000
+      ),
+      pm10_ug_m3 = aqmesh_valid_measurement(.data$pm10_raw, .data$pm10_flag),
+      no2_raw = suppressWarnings(as.numeric(.data$no2_scaled)),
+      no2_flag = aqmesh_measurement_flag(
+        .data$no2_raw, .data$reading_status_normalized,
+        minimum = 0, maximum = 1000, units = .data$no2_units,
+        allowed_units = "ppb", state = .data$no2_state
+      ),
+      no2_ppb = aqmesh_valid_measurement(.data$no2_raw, .data$no2_flag),
+      o3_raw = suppressWarnings(as.numeric(.data$o3_scaled)),
+      o3_flag = aqmesh_measurement_flag(
+        .data$o3_raw, .data$reading_status_normalized,
+        minimum = 0, maximum = 1000, units = .data$o3_units,
+        allowed_units = "ppb", state = .data$no2_state
+      ),
+      o3_ppb = aqmesh_valid_measurement(.data$o3_raw, .data$o3_flag),
+      humidity_raw = suppressWarnings(as.numeric(.data$humidity)),
+      humidity_flag = aqmesh_measurement_flag(
+        .data$humidity_raw, .data$reading_status_normalized,
+        minimum = 0, maximum = 100
+      ),
+      relative_humidity_percent = aqmesh_valid_measurement(
+        .data$humidity_raw, .data$humidity_flag
+      ),
+      temperature_f_raw = suppressWarnings(as.numeric(.data$temperature_f)),
+      temperature_flag = aqmesh_measurement_flag(
+        .data$temperature_f_raw, .data$reading_status_normalized,
+        minimum = -22, maximum = 140
+      ),
+      temperature_c = aqmesh_valid_measurement(
+        .data$temperature_f_raw, .data$temperature_flag,
+        transform = function(value) (value - 32) * 5 / 9
       ),
       regulatory_qa = FALSE,
       parameter_code = "AQMESH_PM25_SCALED",
@@ -267,6 +350,25 @@ aqmesh_build_utc_composite <- function(clean_records, field_only = TRUE) {
       contributor_pocs = tceq_collapse_values(.data$pod_serial_number),
       contributor_sources = tceq_collapse_values(.data$raw_series_key),
       value_flag_summary = tceq_collapse_values(.data$value_flag),
+      composite_pm10_ug_m3 = tceq_safe_median(.data$pm10_ug_m3),
+      pm10_contributing_records = sum(is.finite(.data$pm10_ug_m3)),
+      pm10_flag_summary = tceq_collapse_values(.data$pm10_flag),
+      composite_no2_ppb = tceq_safe_median(.data$no2_ppb),
+      no2_contributing_records = sum(is.finite(.data$no2_ppb)),
+      no2_flag_summary = tceq_collapse_values(.data$no2_flag),
+      composite_o3_ppb = tceq_safe_median(.data$o3_ppb),
+      o3_contributing_records = sum(is.finite(.data$o3_ppb)),
+      o3_flag_summary = tceq_collapse_values(.data$o3_flag),
+      composite_temperature_c = tceq_safe_median(.data$temperature_c),
+      temperature_contributing_records = sum(is.finite(.data$temperature_c)),
+      temperature_flag_summary = tceq_collapse_values(.data$temperature_flag),
+      composite_relative_humidity_percent = tceq_safe_median(
+        .data$relative_humidity_percent
+      ),
+      humidity_contributing_records = sum(
+        is.finite(.data$relative_humidity_percent)
+      ),
+      humidity_flag_summary = tceq_collapse_values(.data$humidity_flag),
       revision_count = sum(.data$revision_count, na.rm = TRUE),
       reading_status_summary = tceq_collapse_values(.data$reading_status_normalized),
       .groups = "drop"
@@ -306,6 +408,29 @@ aqmesh_build_display_composite <- function(hourly_utc) {
       contributor_pocs = tceq_collapse_values(.data$contributor_pocs),
       contributor_sources = tceq_collapse_values(.data$contributor_sources),
       value_flag_summary = tceq_collapse_values(.data$value_flag_summary),
+      composite_pm10_ug_m3 = tceq_safe_median(.data$composite_pm10_ug_m3),
+      pm10_contributing_records = sum(.data$pm10_contributing_records, na.rm = TRUE),
+      pm10_flag_summary = tceq_collapse_values(.data$pm10_flag_summary),
+      composite_no2_ppb = tceq_safe_median(.data$composite_no2_ppb),
+      no2_contributing_records = sum(.data$no2_contributing_records, na.rm = TRUE),
+      no2_flag_summary = tceq_collapse_values(.data$no2_flag_summary),
+      composite_o3_ppb = tceq_safe_median(.data$composite_o3_ppb),
+      o3_contributing_records = sum(.data$o3_contributing_records, na.rm = TRUE),
+      o3_flag_summary = tceq_collapse_values(.data$o3_flag_summary),
+      composite_temperature_c = tceq_safe_median(.data$composite_temperature_c),
+      temperature_contributing_records = sum(
+        .data$temperature_contributing_records, na.rm = TRUE
+      ),
+      temperature_flag_summary = tceq_collapse_values(
+        .data$temperature_flag_summary
+      ),
+      composite_relative_humidity_percent = tceq_safe_median(
+        .data$composite_relative_humidity_percent
+      ),
+      humidity_contributing_records = sum(
+        .data$humidity_contributing_records, na.rm = TRUE
+      ),
+      humidity_flag_summary = tceq_collapse_values(.data$humidity_flag_summary),
       reading_status_summary = tceq_collapse_values(.data$reading_status_summary),
       revision_count = sum(.data$revision_count, na.rm = TRUE),
       .groups = "drop"
@@ -356,6 +481,17 @@ aqmesh_complete_display_hours <- function(hourly_display) {
       total_records = dplyr::coalesce(.data$total_records, 0L),
       available_records = dplyr::coalesce(.data$available_records, 0L),
       contributing_records = dplyr::coalesce(.data$contributing_records, 0L),
+      pm10_contributing_records = dplyr::coalesce(
+        .data$pm10_contributing_records, 0L
+      ),
+      no2_contributing_records = dplyr::coalesce(.data$no2_contributing_records, 0L),
+      o3_contributing_records = dplyr::coalesce(.data$o3_contributing_records, 0L),
+      temperature_contributing_records = dplyr::coalesce(
+        .data$temperature_contributing_records, 0L
+      ),
+      humidity_contributing_records = dplyr::coalesce(
+        .data$humidity_contributing_records, 0L
+      ),
       dst_fold_count = dplyr::coalesce(.data$dst_fold_count, 0L),
       revision_count = dplyr::coalesce(.data$revision_count, 0L),
       parameter_fallback = dplyr::coalesce(.data$parameter_fallback, FALSE),
@@ -364,6 +500,13 @@ aqmesh_complete_display_hours <- function(hourly_display) {
       has_regulatory_value = FALSE,
       composite_selection = dplyr::coalesce(.data$composite_selection, "missing"),
       value_flag_summary = dplyr::coalesce(.data$value_flag_summary, ""),
+      pm10_flag_summary = dplyr::coalesce(.data$pm10_flag_summary, ""),
+      no2_flag_summary = dplyr::coalesce(.data$no2_flag_summary, ""),
+      o3_flag_summary = dplyr::coalesce(.data$o3_flag_summary, ""),
+      temperature_flag_summary = dplyr::coalesce(
+        .data$temperature_flag_summary, ""
+      ),
+      humidity_flag_summary = dplyr::coalesce(.data$humidity_flag_summary, ""),
       reading_status_summary = dplyr::coalesce(.data$reading_status_summary, ""),
       data_source = "Dallas AQMesh"
     ) |>
