@@ -166,7 +166,7 @@ tceq_build_station_metadata <- function(inventory, fetcher = tceq_fetch_site_htm
     dplyr::filter(.data$download_selected %in% TRUE) |>
     dplyr::arrange(.data$aqs_site_id)
   if (!nrow(canonical) || anyDuplicated(canonical$aqs_site_id)) {
-    stop("Expected one canonical CAMS record per DFW PM2.5 monitoring site.")
+    stop("Expected one canonical CAMS record per supported DFW monitoring site.")
   }
   aliases <- inventory |>
     dplyr::filter(.data$aqs_site_id %in% canonical$aqs_site_id) |>

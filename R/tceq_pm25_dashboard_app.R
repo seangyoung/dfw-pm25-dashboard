@@ -1887,13 +1887,19 @@ tceq_dashboard_server <- function(
           value < 1L || value > length(frames)) value <- 1L
       interval <- suppressWarnings(as.integer(input$regional_speed))
       if (length(interval) != 1L || is.na(interval)) interval <- 1000L
-      shiny::sliderInput(
-        "regional_frame", "Animation frame", min = 1L, max = length(frames),
-        value = value, step = 1L,
-        animate = shiny::animationOptions(
+      cached <- rv$regional_animation
+      ready <- !is.null(cached) &&
+        identical(cached$key, regional_surface_key()) &&
+        length(cached$frames) == length(frames)
+      animation <- if (ready && length(frames) > 1L) {
+        shiny::animationOptions(
           interval = interval,
           loop = FALSE, playButton = "Play", pauseButton = "Pause"
         )
+      } else FALSE
+      shiny::sliderInput(
+        "regional_frame", "Animation frame", min = 1L, max = length(frames),
+        value = value, step = 1L, animate = animation
       )
     })
 
@@ -1948,8 +1954,8 @@ tceq_dashboard_server <- function(
           "tceq-set-disabled", list(id = "regional_generate", disabled = FALSE)
         )
         shiny::updateActionButton(
-          session, "regional_generate", label = "Generate & play animation",
-          icon = shiny::icon("play")
+          session, "regional_generate", label = "Generate animation",
+          icon = shiny::icon("film")
         )
       }, add = TRUE)
       surfaces <- vector("list", length(frames))
@@ -1966,15 +1972,8 @@ tceq_dashboard_server <- function(
         key = regional_surface_key(), frames = surfaces
       )
       shiny::updateSliderInput(session, "regional_frame", value = 1L)
-      if (length(frames) > 1L) {
-        session$onFlushed(function() {
-          session$sendCustomMessage(
-            "pm25-start-animation", list(id = "regional_frame")
-          )
-        }, once = TRUE)
-      }
       shiny::showNotification(
-        paste(length(frames), "frames ready; playback started."),
+        paste(length(frames), "frames ready. Use Play to review the animation."),
         type = "message", duration = 4
       )
     }, ignoreInit = TRUE)
@@ -1990,7 +1989,7 @@ tceq_dashboard_server <- function(
           class = "cache-note",
           paste(
             length(frames),
-            "frames are cached. Use Play, Pause, or the frame slider to review them."
+            "frames are cached. Use the Play/Pause control or frame slider to review them."
           )
         ))
       }
@@ -1998,7 +1997,7 @@ tceq_dashboard_server <- function(
         class = "cache-note",
         paste(
           "The current frame is shown now. Generate the",
-          length(frames), "frame animation to cache the sequence and start playback."
+          length(frames), "frame animation to enable smooth playback."
         )
       )
     })
@@ -2072,6 +2071,8 @@ tceq_dashboard_server <- function(
 
     regional_surface_payload <- function(surface, view, id, frame_labels) {
       spatial <- regional_spatial()
+      # The layer picker is intentionally hidden until ancillary overlays return.
+      layer <- "concentration"
       values <- surface$value
       supported <- surface$supported
       upper <- if (identical(view, "Disagreement")) {
@@ -2079,20 +2080,20 @@ tceq_dashboard_server <- function(
       } else tceq_dashboard_regional_concentration_upper()
       categorical <- NULL
       adaptive_active <- FALSE
-      if (identical(input$regional_layer, "support_count")) {
+      if (identical(layer, "support_count")) {
         values <- if (identical(view, "TCEQ")) surface$tceq$nearby_count else
           if (identical(view, "Dallas AQMesh")) surface$aqmesh$nearby_count else
             surface$nearby_count
         supported <- spatial$grid$inside_region
         upper <- 8
-      } else if (identical(input$regional_layer, "nearest_distance")) {
+      } else if (identical(layer, "nearest_distance")) {
         values <- if (identical(view, "TCEQ")) surface$tceq$nearest_m else
           if (identical(view, "Dallas AQMesh")) surface$aqmesh$nearest_m else
             surface$nearest_m
         values <- values / 1000
         supported <- spatial$grid$inside_region & is.finite(values)
         upper <- 25
-      } else if (identical(input$regional_layer, "network_contribution")) {
+      } else if (identical(layer, "network_contribution")) {
         values <- if (identical(view, "TCEQ")) {
           ifelse(surface$tceq$supported, 1, NA_real_)
         } else if (identical(view, "Dallas AQMesh")) {
@@ -2121,17 +2122,17 @@ tceq_dashboard_server <- function(
       } else if (identical(view, "Dallas AQMesh")) {
         "Dallas AQMesh"
       } else c("TCEQ", "Dallas AQMesh")
-      legend <- if (identical(input$regional_layer, "network_contribution")) {
+      legend <- if (identical(layer, "network_contribution")) {
         list(type = "categorical", title = "Contributing network", sensors = sensors)
       } else {
-        title <- if (identical(input$regional_layer, "support_count")) {
+        title <- if (identical(layer, "support_count")) {
           "Nearby valid sensors"
-        } else if (identical(input$regional_layer, "nearest_distance")) {
+        } else if (identical(layer, "nearest_distance")) {
           "Nearest valid sensor (km)"
         } else if (identical(view, "Disagreement")) {
           "Absolute network difference (µg/m³)"
         } else "PM2.5 (µg/m³)"
-        high <- if (identical(input$regional_layer, "concentration") &&
+        high <- if (identical(layer, "concentration") &&
                     !adaptive_active) {
           paste0(format(round(upper, 1), trim = TRUE), "+")
         } else format(round(upper, 1), trim = TRUE)
@@ -2225,6 +2226,16 @@ tceq_dashboard_server <- function(
     shiny::observeEvent(
       list(input$event_tabs, input$regional_compare, input$dashboard_tabs),
       {
+        compare_active <- identical(input$dashboard_tabs, "events") &&
+          identical(input$event_tabs, "maps") && isTRUE(input$regional_compare)
+        session$sendCustomMessage(
+          "pm25-map-sync",
+          list(
+            id = "regional-comparison",
+            maps = c("regional_tceq_map", "regional_aqmesh_map"),
+            enabled = compare_active
+          )
+        )
         session$sendCustomMessage(
           "pm25-map-resize",
           c("regional_surface_map", "regional_tceq_map", "regional_aqmesh_map")
@@ -2298,9 +2309,6 @@ tceq_dashboard_server <- function(
           "Modeled supported area meeting all three MDPE daily thresholds: %.1f%%",
           modeled
         )),
-        if (identical(input$regional_layer, "network_contribution")) shiny::span(
-          "Contribution colors: TCEQ teal · AQMesh purple · both networks amber"
-        ),
         shiny::span(class = "validation-note", validation_text)
       )
     })
@@ -2384,13 +2392,19 @@ tceq_dashboard_server <- function(
           value < 1L || value > length(frames)) value <- 1L
       interval <- suppressWarnings(as.integer(input$spatial_speed))
       if (length(interval) != 1L || is.na(interval)) interval <- 1000L
-      shiny::sliderInput(
-        "spatial_frame", "Animation frame", min = 1L, max = length(frames),
-        value = value, step = 1L,
-        animate = shiny::animationOptions(
+      cached <- rv$spatial_animation
+      ready <- !is.null(cached) &&
+        identical(cached$key, spatial_surface_key()) &&
+        length(cached$frames) == length(frames)
+      animation <- if (ready && length(frames) > 1L) {
+        shiny::animationOptions(
           interval = interval, loop = FALSE,
           playButton = "Play", pauseButton = "Pause"
         )
+      } else FALSE
+      shiny::sliderInput(
+        "spatial_frame", "Animation frame", min = 1L, max = length(frames),
+        value = value, step = 1L, animate = animation
       )
     })
 
@@ -2438,8 +2452,8 @@ tceq_dashboard_server <- function(
           "tceq-set-disabled", list(id = "spatial_generate", disabled = FALSE)
         )
         shiny::updateActionButton(
-          session, "spatial_generate", label = "Generate & play animation",
-          icon = shiny::icon("play")
+          session, "spatial_generate", label = "Generate animation",
+          icon = shiny::icon("film")
         )
       }, add = TRUE)
       surfaces <- vector("list", length(frames))
@@ -2456,15 +2470,8 @@ tceq_dashboard_server <- function(
         key = spatial_surface_key(), frames = surfaces
       )
       shiny::updateSliderInput(session, "spatial_frame", value = 1L)
-      if (length(frames) > 1L) {
-        session$onFlushed(function() {
-          session$sendCustomMessage(
-            "pm25-start-animation", list(id = "spatial_frame")
-          )
-        }, once = TRUE)
-      }
       shiny::showNotification(
-        paste(length(frames), "frames ready; playback started."),
+        paste(length(frames), "frames ready. Use Play to review the animation."),
         type = "message", duration = 4
       )
     }, ignoreInit = TRUE)
@@ -2479,10 +2486,10 @@ tceq_dashboard_server <- function(
         class = "cache-note",
         if (ready) paste(
           length(frames),
-          "frames are cached. Use Play, Pause, or the frame slider to review them."
+          "frames are cached. Use the Play/Pause control or frame slider to review them."
         ) else paste(
           "The current daily frame is shown now. Generate the",
-          length(frames), "frame animation to cache and play the sequence."
+          length(frames), "frame animation to enable smooth playback."
         )
       )
     })
@@ -2511,6 +2518,8 @@ tceq_dashboard_server <- function(
     spatial_surface_payload <- function(surface, view, id, frame_labels) {
       spatial <- regional_spatial()
       info <- spatial_measurement_info()
+      # The layer picker is intentionally hidden until ancillary overlays return.
+      layer <- "concentration"
       values <- surface$value
       supported <- surface$supported
       lower <- info$fixed_min[[1]]
@@ -2521,14 +2530,14 @@ tceq_dashboard_server <- function(
         lower <- 0
         upper <- max(5, (info$fixed_max[[1]] - info$fixed_min[[1]]) / 4)
       }
-      if (identical(input$spatial_layer, "support_count")) {
+      if (identical(layer, "support_count")) {
         values <- if (identical(view, "TCEQ")) surface$tceq$nearby_count else
           if (identical(view, "Dallas AQMesh")) surface$aqmesh$nearby_count else
             surface$nearby_count
         supported <- spatial$grid$inside_region
         lower <- 0
         upper <- 8
-      } else if (identical(input$spatial_layer, "nearest_distance")) {
+      } else if (identical(layer, "nearest_distance")) {
         values <- if (identical(view, "TCEQ")) surface$tceq$nearest_m else
           if (identical(view, "Dallas AQMesh")) surface$aqmesh$nearest_m else
             surface$nearest_m
@@ -2536,7 +2545,7 @@ tceq_dashboard_server <- function(
         supported <- spatial$grid$inside_region & is.finite(values)
         lower <- 0
         upper <- 25
-      } else if (identical(input$spatial_layer, "network_contribution")) {
+      } else if (identical(layer, "network_contribution")) {
         values <- if (identical(view, "TCEQ")) {
           ifelse(surface$tceq$supported, 1, NA_real_)
         } else if (identical(view, "Dallas AQMesh")) {
@@ -2571,17 +2580,17 @@ tceq_dashboard_server <- function(
       } else if (identical(view, "Dallas AQMesh")) {
         "Dallas AQMesh"
       } else c("TCEQ", "Dallas AQMesh")
-      legend <- if (identical(input$spatial_layer, "network_contribution")) {
+      legend <- if (identical(layer, "network_contribution")) {
         list(type = "categorical", title = "Contributing network", sensors = sensors)
       } else {
-        title <- if (identical(input$spatial_layer, "support_count")) {
+        title <- if (identical(layer, "support_count")) {
           "Nearby valid sensors"
-        } else if (identical(input$spatial_layer, "nearest_distance")) {
+        } else if (identical(layer, "nearest_distance")) {
           "Nearest valid sensor (km)"
         } else if (identical(view, "Disagreement")) {
           paste0("Absolute network difference (", info$unit[[1]], ")")
         } else paste0(info$short_label[[1]], " (", info$unit[[1]], ")")
-        high <- if (identical(input$spatial_layer, "concentration") &&
+        high <- if (identical(layer, "concentration") &&
                     !adaptive_active && isTRUE(info$zero_based[[1]])) {
           paste0(format(round(upper, 1), trim = TRUE), "+")
         } else format(round(upper, 1), trim = TRUE)
@@ -2674,6 +2683,16 @@ tceq_dashboard_server <- function(
     shiny::observeEvent(
       list(input$spatial_compare, input$dashboard_tabs),
       {
+        compare_active <- identical(input$dashboard_tabs, "spatial") &&
+          isTRUE(input$spatial_compare)
+        session$sendCustomMessage(
+          "pm25-map-sync",
+          list(
+            id = "spatial-comparison",
+            maps = c("spatial_tceq_map", "spatial_aqmesh_map"),
+            enabled = compare_active
+          )
+        )
         session$sendCustomMessage(
           "pm25-map-resize",
           c("spatial_surface_map", "spatial_tceq_map", "spatial_aqmesh_map")

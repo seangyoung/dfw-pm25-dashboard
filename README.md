@@ -53,13 +53,18 @@ assignments, causal source attribution, or regulatory determinations.
 
 ## Data and provenance
 
-The versioned deployment cache contains 17 public TCEQ monitoring locations and
-32 public City of Dallas AQMesh locations. The TCEQ site-hour composite prefers
-regulatory parameter 88101 and uses acceptable parameter 88502 only when no
-finite 88101 measurement is available. TCEQ site bundles also retain PM10
-(81102), NO2 (42602), O3 (44201), SO2 (42401), CO (42101), outdoor temperature (62101), and relative
-humidity (62201) where reported; regulatory-QA records are preferred and
-temperature is converted from °F to °C. TCEQ 81102 PM10 is reported at
+The versioned deployment cache contains every DFW TCEQ monitoring location
+with at least one supported measurement—currently 62 physical sites—and 32
+public City of Dallas AQMesh locations. Each update discovers the TCEQ station
+set from the official CAMS menu and parameter availability rather than relying
+on a fixed list. The TCEQ PM2.5 site-hour composite prefers regulatory
+parameter 88101 and uses acceptable parameter 88502 only when no finite 88101
+measurement is available. Across the full station universe, TCEQ site bundles
+retain PM10 (81102), NO2 (42602), O3 (44201), SO2 (42401), CO (42101), outdoor
+temperature (62101), and relative humidity (62201) where reported;
+regulatory-QA records are preferred and temperature is converted from °F to
+°C. PM2.5 events remain limited to sites with PM2.5, while Spatial explorer
+uses all sites with the selected measurement. TCEQ 81102 PM10 is reported at
 standard conditions and is not treated as method-equivalent to the AQMesh
 scaled PM10 field. Clearly implausible numeric values are retained in the raw
 archive but excluded from dashboard composites. Dallas calculations use the City's
@@ -112,8 +117,9 @@ Rscript --vanilla scripts/08h_prepare_combined_pm25_dashboard.R
 
 Parameter 88101 remains primary at each site-hour; parameter 88502 is retained
 and used only as a fallback. The same acquisition script downloads TCEQ 81102,
-42602, 44201, 42401, 42101, 62101, and 62201 streams for dashboard PM2.5 sites when TCEQ
-reports them. Raw parameter codes, units, POCs, report tables, QA statements,
+42602, 44201, 42401, 42101, 62101, and 62201 streams across every DFW site
+where TCEQ reports at least one supported measurement. Raw parameter codes,
+units, POCs, report tables, QA statements,
 flags, and source filenames remain available for diagnostics. The Dallas
 workflow archives the original paginated ArcGIS responses and retains
 superseded revisions for auditability.

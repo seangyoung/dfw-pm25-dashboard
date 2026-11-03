@@ -85,7 +85,7 @@ if (file.exists(metadata_path) && !refresh_metadata && cached_metadata_matches) 
   station_metadata <- tceq_build_station_metadata(inventory)
   if (nrow(station_metadata) != length(expected_site_ids) || anyNA(station_metadata$latitude) ||
       anyNA(station_metadata$longitude)) {
-    stop("Station metadata validation failed: every PM2.5 site requires coordinates.")
+    stop("Station metadata validation failed: every supported site requires coordinates.")
   }
   atomic_save_rds(station_metadata, metadata_path)
   atomic_write_csv(station_metadata, file.path(cache_dir, "station_metadata.csv"))
@@ -105,11 +105,11 @@ by_site <- if (identical(
 } else {
   import_environment$load_tceq_dfw_pm25(raw_dir)
 }
-if (!setequal(names(by_site), station_metadata$aqs_site_id)) {
+if (length(setdiff(names(by_site), station_metadata$aqs_site_id))) {
   stop(
-    "Imported site IDs do not match station metadata. Imported: ",
-    paste(sort(names(by_site)), collapse = ", "), "; metadata: ",
-    paste(sort(station_metadata$aqs_site_id), collapse = ", "), "."
+    "Imported PM2.5 site IDs are missing from station metadata: ",
+    paste(sort(setdiff(names(by_site), station_metadata$aqs_site_id)), collapse = ", "),
+    "."
   )
 }
 raw_manifest <- readr::read_csv(raw_manifest_path, show_col_types = FALSE)
@@ -120,14 +120,19 @@ supplemental_manifest <- raw_manifest |>
     !is.na(.data$relative_path), nzchar(.data$relative_path)
   )
 
-site_summaries <- vector("list", length(by_site))
-daily_indexes <- vector("list", length(by_site))
-event_indexes <- vector("list", length(by_site))
-names(site_summaries) <- names(daily_indexes) <- names(event_indexes) <- names(by_site)
+site_ids <- station_metadata$aqs_site_id
+site_summaries <- vector("list", length(site_ids))
+daily_indexes <- vector("list", length(site_ids))
+event_indexes <- vector("list", length(site_ids))
+names(site_summaries) <- names(daily_indexes) <- names(event_indexes) <- site_ids
+pm25_raw_template <- by_site[[1]][0, , drop = FALSE]
 
-for (site_id in names(by_site)) {
+for (site_id in site_ids) {
   message("Preparing ", site_id, "...")
-  raw <- by_site[[site_id]] |>
+  raw <- if (site_id %in% names(by_site)) {
+    by_site[[site_id]]
+  } else pm25_raw_template
+  raw <- raw |>
     dplyr::mutate(
       date = as.Date(.data$date),
       datetime_lstd = tceq_lstd_datetime(.data$date, .data$hour),
@@ -135,9 +140,6 @@ for (site_id in names(by_site)) {
         .data$source_file, .data$report_block, .data$poc
       )
     )
-  hourly <- tceq_build_hourly_composite(raw)
-  daily <- tceq_build_daily_summary(hourly, raw, minimum_valid_hours = 18L)
-  events <- tceq_build_event_index(hourly, daily)
   site_supplemental_files <- supplemental_manifest |>
     dplyr::filter(.data$aqs_site_id == site_id) |>
     dplyr::pull(.data$relative_path) |>
@@ -148,12 +150,23 @@ for (site_id in names(by_site)) {
   site_supplemental_hourly <- tceq_build_supplemental_hourly(
     site_supplemental_raw
   )
-  hourly <- tceq_merge_supplemental_hourly(hourly, site_supplemental_hourly)
+  hourly <- if (nrow(raw)) {
+    tceq_merge_supplemental_hourly(
+      tceq_build_hourly_composite(raw), site_supplemental_hourly
+    )
+  } else {
+    tceq_build_supplemental_only_hourly(site_supplemental_hourly)
+  }
+  if (!nrow(hourly)) {
+    stop("No supported hourly measurements were imported for ", site_id, ".")
+  }
+  daily <- tceq_build_daily_summary(hourly, raw, minimum_valid_hours = 18L)
+  events <- tceq_build_event_index(hourly, daily)
   metadata <- station_metadata |>
     dplyr::filter(.data$aqs_site_id == site_id)
   hourly$site_name <- metadata$site_name[[1]]
   bundle <- list(
-    schema_version = 5L,
+    schema_version = 6L,
     metadata = metadata,
     hourly = tibble::as_tibble(hourly),
     daily = tibble::as_tibble(daily),
@@ -229,7 +242,7 @@ atomic_write_csv(station_index, file.path(cache_dir, "station_index.csv"))
 atomic_write_csv(event_index, file.path(cache_dir, "event_index.csv"))
 
 manifest <- list(
-  schema_version = 5L,
+  schema_version = 6L,
   generated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
   raw_data_dir = normalizePath(raw_dir, winslash = "/"),
   raw_manifest_path = normalizePath(raw_manifest_path, winslash = "/"),

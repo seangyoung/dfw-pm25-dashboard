@@ -134,7 +134,7 @@ for (site_id in tceq_stations$aqs_site_id) {
         TRUE ~ "not_reported"
       )
     )
-  bundle$schema_version <- 7L
+  bundle$schema_version <- 8L
   output_path <- file.path(cache_dir, "sites", tceq_site_cache_filename(site_id))
   atomic_save_rds(bundle, output_path)
   row <- tceq_stations[tceq_stations$aqs_site_id == site_id, , drop = FALSE]
@@ -158,7 +158,7 @@ for (site_id in tceq_stations$aqs_site_id) {
       bundle$hourly, bundle$metadata[1, , drop = FALSE]
     )
   regional_hourly_rows[[site_id]] <- bundle$hourly |>
-    dplyr::filter(!is.na(.data$total_records)) |>
+    dplyr::filter(!is.na(.data$total_records), .data$total_records > 0L) |>
     dplyr::select(
       "aqs_site_id", "datetime_utc", "composite_pm25_ug_m3"
     )
@@ -209,7 +209,7 @@ for (site_id in field_ids) {
     ))) |>
     dplyr::mutate(data_source = "Dallas AQMesh")
   bundle <- list(
-    schema_version = 7L,
+    schema_version = 8L,
     metadata = metadata,
     hourly = tibble::as_tibble(hourly),
     daily = tibble::as_tibble(daily),
@@ -355,7 +355,7 @@ regional_files <- c(
 regional_hourly_files <- regional_hourly$index$years$file
 all_regional_files <- c(regional_files, regional_hourly_files)
 manifest <- list(
-  schema_version = 9L,
+  schema_version = 10L,
   generated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
   data_sources = c("TCEQ", "Dallas AQMesh"),
   source_counts = as.list(table(station_index$data_source)),

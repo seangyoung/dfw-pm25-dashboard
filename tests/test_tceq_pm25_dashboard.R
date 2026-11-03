@@ -137,6 +137,35 @@ stopifnot(
     supplemental_hourly_test$hour == 1L
   ]
 )
+supplemental_only_test <- tceq_build_supplemental_only_hourly(
+  supplemental_hourly_test
+)
+empty_pm25_raw <- tibble::tibble(
+  aqs_site_id = character(), date = as.Date(character()),
+  parameter_code = character(), source_file = character(),
+  report_block = integer(), poc = integer(), daily_max_ug_m3 = double(),
+  daily_avg_ug_m3 = double(), daily_std_ug_m3 = double(),
+  daily_max_flag = character(), daily_avg_flag = character(),
+  daily_std_flag = character()
+)
+supplemental_only_daily <- tceq_build_daily_summary(
+  supplemental_only_test, empty_pm25_raw
+)
+stopifnot(
+  nrow(supplemental_only_test) == 2L,
+  all(supplemental_only_test$total_records == 0L),
+  all(is.na(supplemental_only_test$composite_pm25_ug_m3)),
+  all(supplemental_only_test$composite_selection == "missing"),
+  supplemental_only_test$composite_no2_ppb[
+    supplemental_only_test$hour == 0L
+  ] == 10,
+  nrow(supplemental_only_daily) == 1L,
+  supplemental_only_daily$valid_hours == 0L,
+  !supplemental_only_daily$event_eligible,
+  nrow(tceq_build_event_index(
+    supplemental_only_test, supplemental_only_daily
+  )) == 0L
+)
 
 make_hourly_test <- function(values, start = "2024-01-01 00:00:00") {
   datetime <- as.POSIXct(start, tz = "UTC") + seq_along(values) * 3600 - 3600
@@ -463,6 +492,14 @@ stopifnot(
   any(grepl("download_spatial_grid_request", app_server_source, fixed = TRUE)),
   any(grepl("regional_measurement_daily", app_server_source, fixed = TRUE)),
   any(grepl('"Spatial explorer"', app_ui_source, fixed = TRUE)),
+  !any(grepl('"regional_layer"', app_ui_source, fixed = TRUE)),
+  !any(grepl('"spatial_layer"', app_ui_source, fixed = TRUE)),
+  !any(grepl('"Map layer"', app_ui_source, fixed = TRUE)),
+  any(grepl("pm25-map-sync", app_ui_source, fixed = TRUE)),
+  any(grepl("map.on('moveend'", app_ui_source, fixed = TRUE)),
+  !any(grepl("pm25-start-animation", app_ui_source, fixed = TRUE)),
+  any(grepl('"Generate animation"', app_ui_source, fixed = TRUE)),
+  !any(grepl('"Generate & play animation"', app_ui_source, fixed = TRUE)),
   any(grepl("readr::format_csv", app_server_source, fixed = TRUE))
 )
 public_build_script <- file.path(find_repo_root(), "scripts", "build_shinylive.R")
@@ -755,7 +792,7 @@ shiny::testServer(
       regional_event_network = "All", regional_event_min_days = "2",
       regional_event_min_sites = "2",
       regional_metric = "daily_avg", regional_map_view = "Combined",
-      regional_layer = "concentration"
+      regional_compare = FALSE
     )
     session$flushReact()
     stopifnot(
@@ -808,7 +845,7 @@ shiny::testServer(
     session$setInputs(
       dashboard_tabs = "spatial", spatial_measurement = "temperature",
       spatial_metric = "daily_avg", spatial_map_view = "Combined",
-      spatial_layer = "concentration", spatial_adaptive = FALSE,
+      spatial_adaptive = FALSE,
       spatial_compare = FALSE, spatial_speed = "1000",
       spatial_dates = as.Date(c("2024-01-01", "2024-01-01"))
     )

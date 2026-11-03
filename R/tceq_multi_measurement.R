@@ -317,6 +317,56 @@ tceq_build_supplemental_hourly <- function(raw) {
     dplyr::arrange(.data$aqs_site_id, .data$date, .data$hour)
 }
 
+tceq_build_supplemental_only_hourly <- function(supplemental) {
+  if (!nrow(supplemental)) return(tibble::tibble())
+  required <- c(
+    "aqs_site_id", "site_name", "date", "hour", "hour_lstd", "datetime_lstd"
+  )
+  tceq_assert_columns(
+    supplemental, required, "Supplemental-only TCEQ hourly composite"
+  )
+  primary_order <- c(
+    "aqs_site_id", "site_name", "date", "hour", "hour_lstd",
+    "total_records", "available_records", "primary_records",
+    "acceptable_records", "has_primary_value", "has_acceptable_value",
+    "value_flag_summary", "selected_parameter_code", "has_regulatory_value",
+    "composite_pm25_ug_m3", "contributing_records", "composite_min_ug_m3",
+    "composite_max_ug_m3", "composite_spread_ug_m3", "contributor_pocs",
+    "contributor_parameter_codes", "contributor_sources",
+    "has_qa_preferred_value", "has_explicit_nonqa_value",
+    "parameter_fallback", "qa_fallback", "qa_status_unavailable",
+    "composite_selection", "datetime_lstd"
+  )
+  supplemental |>
+    dplyr::mutate(
+      total_records = 0L,
+      available_records = 0L,
+      primary_records = 0L,
+      acceptable_records = 0L,
+      has_primary_value = FALSE,
+      has_acceptable_value = FALSE,
+      value_flag_summary = NA_character_,
+      selected_parameter_code = NA_character_,
+      has_regulatory_value = FALSE,
+      composite_pm25_ug_m3 = NA_real_,
+      contributing_records = 0L,
+      composite_min_ug_m3 = NA_real_,
+      composite_max_ug_m3 = NA_real_,
+      composite_spread_ug_m3 = NA_real_,
+      contributor_pocs = NA_character_,
+      contributor_parameter_codes = NA_character_,
+      contributor_sources = NA_character_,
+      has_qa_preferred_value = FALSE,
+      has_explicit_nonqa_value = FALSE,
+      parameter_fallback = FALSE,
+      qa_fallback = FALSE,
+      qa_status_unavailable = FALSE,
+      composite_selection = "missing"
+    ) |>
+    dplyr::select(dplyr::all_of(primary_order), dplyr::everything()) |>
+    dplyr::arrange(.data$date, .data$hour)
+}
+
 tceq_merge_supplemental_hourly <- function(primary, supplemental) {
   if (!nrow(supplemental)) return(primary)
   keys <- c("aqs_site_id", "date", "hour", "hour_lstd", "datetime_lstd")

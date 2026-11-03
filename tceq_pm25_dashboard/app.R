@@ -223,7 +223,7 @@ ui <- bslib::page_sidebar(
       "  Shiny.setInputValue(link.id + '_request', Date.now(), {priority: 'event'});\n",
       "}, true);\n",
       "(function() {\n",
-      "  var overlays = {}, legends = {};\n",
+      "  var overlays = {}, legends = {}, mapSyncs = {}, mapSyncRequests = {};\n",
       "  var palette = ['#440154','#414487','#2A788E','#22A884','#7AD151','#FDE725'];\n",
       "  function hexToRgb(hex) { return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)]; }\n",
       "  function color(value, lower, upper) {\n",
@@ -311,19 +311,51 @@ ui <- bslib::page_sidebar(
       "    if (message.fit) map.fitBounds(bounds, {padding:[8,8]});\n",
       "  }\n",
       "  Shiny.addCustomMessageHandler('pm25-surface-frame', function(message) { drawSurface(message, 0); });\n",
+      "  function clearMapSync(id) {\n",
+      "    var sync = mapSyncs[id];\n",
+      "    if (!sync) return;\n",
+      "    sync.entries.forEach(function(entry) {\n",
+      "      if (entry.map && entry.handler) entry.map.off('moveend', entry.handler);\n",
+      "    });\n",
+      "    delete mapSyncs[id];\n",
+      "  }\n",
+      "  function configureMapSync(message, attempt) {\n",
+      "    if (mapSyncRequests[message.id] !== message) return;\n",
+      "    clearMapSync(message.id);\n",
+      "    if (!message.enabled) return;\n",
+      "    var entries = message.maps.map(function(id) {\n",
+      "      var widget = HTMLWidgets.find('#' + id);\n",
+      "      return widget && widget.getMap ? {id: id, map: widget.getMap()} : null;\n",
+      "    });\n",
+      "    if (entries.some(function(entry) { return !entry; })) {\n",
+      "      if (attempt < 40) setTimeout(function() { configureMapSync(message, attempt + 1); }, 100);\n",
+      "      return;\n",
+      "    }\n",
+      "    var sync = {entries: entries, busy: false};\n",
+      "    entries.forEach(function(entry) {\n",
+      "      entry.handler = function() {\n",
+      "        if (sync.busy) return;\n",
+      "        sync.busy = true;\n",
+      "        var center = entry.map.getCenter(), zoom = entry.map.getZoom();\n",
+      "        entries.forEach(function(target) {\n",
+      "          if (target !== entry) target.map.setView(center, zoom, {animate: false});\n",
+      "        });\n",
+      "        sync.busy = false;\n",
+      "      };\n",
+      "      entry.map.on('moveend', entry.handler);\n",
+      "    });\n",
+      "    mapSyncs[message.id] = sync;\n",
+      "    entries[1].map.setView(entries[0].map.getCenter(), entries[0].map.getZoom(), {animate: false});\n",
+      "  }\n",
+      "  Shiny.addCustomMessageHandler('pm25-map-sync', function(message) {\n",
+      "    mapSyncRequests[message.id] = message;\n",
+      "    configureMapSync(message, 0);\n",
+      "  });\n",
       "  Shiny.addCustomMessageHandler('pm25-sidebar-top', function(message) {\n",
       "    setTimeout(function() {\n",
       "      var sidebar = document.querySelector('.bslib-sidebar-layout > .sidebar');\n",
       "      if (sidebar) sidebar.scrollTop = 0;\n",
       "    }, 60);\n",
-      "  });\n",
-      "  Shiny.addCustomMessageHandler('pm25-start-animation', function(message) {\n",
-      "    function start(attempt) {\n",
-      "      var button = document.querySelector('.slider-animate-button[data-target-id=\"' + message.id + '\"]');\n",
-      "      if (!button) { if (attempt < 20) setTimeout(function() { start(attempt + 1); }, 100); return; }\n",
-      "      if (!button.classList.contains('playing')) button.click();\n",
-      "    }\n",
-      "    setTimeout(function() { start(0); }, 80);\n",
       "  });\n",
       "  Shiny.addCustomMessageHandler('pm25-map-resize', function(ids) {\n",
       "    setTimeout(function() { ids.forEach(function(id) { var w=HTMLWidgets.find('#'+id); if(w&&w.getMap) w.getMap().invalidateSize(); }); }, 120);\n",
@@ -461,15 +493,6 @@ ui <- bslib::page_sidebar(
             ), selected = "daily_avg"
           ),
           shiny::uiOutput("regional_frame_control"),
-          shiny::selectInput(
-            "regional_layer", "Map layer",
-            choices = c(
-              "PM2.5 concentration" = "concentration",
-              "Nearby sensor count" = "support_count",
-              "Nearest sensor distance" = "nearest_distance",
-              "Contributing network" = "network_contribution"
-            ), selected = "concentration"
-          ),
           shiny::checkboxInput(
             "regional_adaptive", "Adaptive scale for static frame", FALSE
           ),
@@ -482,8 +505,8 @@ ui <- bslib::page_sidebar(
             selected = "1000"
           ),
           shiny::actionButton(
-            "regional_generate", "Generate & play animation",
-            icon = shiny::icon("play")
+            "regional_generate", "Generate animation",
+            icon = shiny::icon("film")
           ),
           shiny::uiOutput("regional_animation_status")
         )
@@ -543,15 +566,6 @@ ui <- bslib::page_sidebar(
         format = "yyyy-mm-dd", separator = " to "
       ),
       shiny::uiOutput("spatial_frame_control"),
-      shiny::selectInput(
-        "spatial_layer", "Map layer",
-        choices = c(
-          "Interpolated measurement" = "concentration",
-          "Nearby sensor count" = "support_count",
-          "Nearest sensor distance" = "nearest_distance",
-          "Contributing network" = "network_contribution"
-        ), selected = "concentration"
-      ),
       shiny::checkboxInput(
         "spatial_adaptive", "Adaptive scale for static frame", FALSE
       ),
@@ -564,8 +578,8 @@ ui <- bslib::page_sidebar(
         selected = "1000"
       ),
       shiny::actionButton(
-        "spatial_generate", "Generate & play animation",
-        icon = shiny::icon("play")
+        "spatial_generate", "Generate animation",
+        icon = shiny::icon("film")
       ),
       shiny::uiOutput("spatial_animation_status"),
       shiny::uiOutput("spatial_cache_status")

@@ -1,6 +1,7 @@
 #!/usr/bin/env Rscript
 
-# Acquire monthly, hourly TCEQ reports for the dashboard's DFW PM2.5 sites.
+# Acquire monthly, hourly TCEQ reports for every DFW site with at least one
+# supported dashboard measurement.
 # PM2.5 plus the matching AQMesh measurements (PM10, NO2, O3, SO2, CO,
 # temperature, and relative humidity) are retained as separate parameter streams. The TCEQ
 # "comma-delimited" response is CSV text embedded in an HTML <pre> element, so
@@ -184,7 +185,7 @@ parse_availability <- function(html, parameter_code) {
   )
 }
 
-discover_site_availability <- function(site, complete_month, parameter_code) {
+site_discovery_months <- function(site, complete_month) {
   anchor <- if (!is.na(site$deactivated_date)) {
     first_of_month(site$deactivated_date)
   } else {
@@ -199,20 +200,39 @@ discover_site_availability <- function(site, complete_month, parameter_code) {
     "2012-08-01", "2010-08-01", "2007-08-01", "2005-08-01",
     "2000-08-01", "1996-08-01"
   ))
-  fallback <- unique(fallback[fallback >= as.Date("1996-01-01") & fallback <= complete_month])
+  unique(fallback[fallback >= as.Date("1996-01-01") & fallback <= complete_month])
+}
+
+discover_site_parameters <- function(site, complete_month, parameter_codes) {
+  results <- stats::setNames(vector("list", length(parameter_codes)), parameter_codes)
+  fallback <- site_discovery_months(site, complete_month)
   for (probe_month in fallback) {
     probe_month <- as.Date(probe_month, origin = "1970-01-01")
     html <- fetch_tceq(month_fields(site$site_option, probe_month, submitted = "0"))
-    availability <- parse_availability(html, parameter_code)
-    if (!is.null(availability)) {
-      return(c(availability, list(probe_month = probe_month, discovery_status = "parameter_available")))
+    unresolved <- names(results)[vapply(results, is.null, logical(1))]
+    for (parameter_code in unresolved) {
+      availability <- parse_availability(html, parameter_code)
+      if (!is.null(availability)) {
+        results[[parameter_code]] <- c(
+          availability,
+          list(probe_month = probe_month, discovery_status = "parameter_available")
+        )
+      }
     }
+    if (all(!vapply(results, is.null, logical(1)))) break
   }
-  list(
-    availability_text = NA_character_, first_month = as.Date(NA),
-    last_month = as.Date(NA), probe_month = as.Date(NA),
-    discovery_status = "parameter_not_found"
-  )
+  for (parameter_code in names(results)[vapply(results, is.null, logical(1))]) {
+    results[[parameter_code]] <- list(
+      availability_text = NA_character_, first_month = as.Date(NA),
+      last_month = as.Date(NA), probe_month = as.Date(NA),
+      discovery_status = "parameter_not_found"
+    )
+  }
+  results
+}
+
+discover_site_availability <- function(site, complete_month, parameter_code) {
+  discover_site_parameters(site, complete_month, parameter_code)[[parameter_code]]
 }
 
 extract_report_text <- function(html) {
@@ -318,28 +338,32 @@ discovery_order <- unique(c(
   intersect(pm25_parameter_codes, parameter_codes),
   setdiff(parameter_codes, pm25_parameter_codes)
 ))
-for (parameter_code in discovery_order) {
-  status_column <- parameter_column("discovery_status", parameter_code)
-  unresolved <- which(is.na(sites[[status_column]]) | !nzchar(sites[[status_column]]))
-  if (parameter_code %in% supplemental_parameter_codes) {
-    pm25_sites <- unique(sites$aqs_site_id[
-      sites[[parameter_column("discovery_status", "88101")]] %in%
-        c("pm25_available", "parameter_available") |
-      sites[[parameter_column("discovery_status", "88502")]] %in%
-        c("pm25_available", "parameter_available")
-    ])
-    unresolved <- unresolved[sites$aqs_site_id[unresolved] %in% pm25_sites]
-  }
-  if (length(unresolved)) {
-    message(
-      "Checking parameter ", parameter_code, " availability for ",
-      length(unresolved), " unresolved DFW CAMS entries..."
+unresolved_by_row <- lapply(seq_len(nrow(sites)), function(i) {
+  discovery_order[vapply(discovery_order, function(parameter_code) {
+    status <- sites[[parameter_column("discovery_status", parameter_code)]][i]
+    is.na(status) || !nzchar(status)
+  }, logical(1))]
+})
+unresolved_rows <- which(lengths(unresolved_by_row) > 0L)
+if (length(unresolved_rows)) {
+  message(
+    "Checking all requested parameters for ", length(unresolved_rows),
+    " unresolved DFW CAMS entries..."
+  )
+  discovery_worker <- function(i) {
+    discover_site_parameters(
+      sites[i], complete_month, unresolved_by_row[[i]]
     )
-    for (position in seq_along(unresolved)) {
-      i <- unresolved[position]
-      availability <- discover_site_availability(
-        sites[i], complete_month, parameter_code
-      )
+  }
+  discoveries <- if (.Platform$OS.type == "windows" || workers == 1L) {
+    lapply(unresolved_rows, discovery_worker)
+  } else {
+    parallel::mclapply(unresolved_rows, discovery_worker, mc.cores = workers)
+  }
+  for (position in seq_along(unresolved_rows)) {
+    i <- unresolved_rows[position]
+    for (parameter_code in names(discoveries[[position]])) {
+      availability <- discoveries[[position]][[parameter_code]]
       sites[i, (parameter_column("availability_text", parameter_code)) := availability$availability_text]
       sites[i, (parameter_column("first_month", parameter_code)) := availability$first_month]
       sites[i, (parameter_column("tceq_last_month", parameter_code)) := availability$last_month]
@@ -347,27 +371,20 @@ for (parameter_code in discovery_order) {
         min(availability$last_month, complete_month)
       } else as.Date(NA)]
       sites[i, (parameter_column("probe_month", parameter_code)) := availability$probe_month]
-      sites[i, (status_column) := availability$discovery_status]
-      if (position %% 10L == 0L || position == length(unresolved)) {
-        message("  parameter ", parameter_code, " availability ", position, "/", length(unresolved))
-      }
+      sites[i, (parameter_column("discovery_status", parameter_code)) := availability$discovery_status]
+    }
+    if (position %% 10L == 0L || position == length(unresolved_rows)) {
+      message("  station availability ", position, "/", length(unresolved_rows))
     }
   }
 }
 
-pm25_site_ids <- unique(sites$aqs_site_id[
-  sites[[parameter_column("discovery_status", "88101")]] %in%
-    c("pm25_available", "parameter_available") |
-  sites[[parameter_column("discovery_status", "88502")]] %in%
-    c("pm25_available", "parameter_available")
-])
 eligible_by_parameter <- lapply(supported_parameter_codes, function(parameter_code) {
   first_column <- parameter_column("first_month", parameter_code)
   last_column <- parameter_column("download_last_month", parameter_code)
   status_column <- parameter_column("discovery_status", parameter_code)
   result <- sites[
-    aqs_site_id %in% pm25_site_ids &
-      get(status_column) %in% c("pm25_available", "parameter_available") &
+    get(status_column) %in% c("pm25_available", "parameter_available") &
       get(first_column) <= get(last_column)
   ]
   result[, `:=`(
@@ -382,9 +399,9 @@ eligible_cams <- data.table::rbindlist(eligible_by_parameter, fill = TRUE)
 data.table::setorder(eligible_cams, parameter_code, aqs_site_id, cams_numeric)
 
 # A physical station can appear several times in the CAMS menu under historical
-# C/A/X instrument aliases. Those aliases return duplicate PM2.5 tables. Select
-# the lowest-numbered CAMS entry once per EPA/AQS site and retain all aliases in
-# the inventory for auditability.
+# C/A/X instrument aliases. Select one CAMS stream per parameter and EPA/AQS
+# site, then retain the lowest-numbered available alias as the site's metadata
+# record. All aliases remain in the inventory for auditability.
 all_streams <- eligible_cams[, .SD[1L], by = c("parameter_code", "aqs_site_id")]
 selected_streams <- all_streams[parameter_code %in% parameter_codes]
 for (code in supported_parameter_codes) {
@@ -396,29 +413,32 @@ for (code in supported_parameter_codes) {
           cams_id == get(parameter_column("canonical_cams_id", code))]
 }
 physical_sites <- all_streams[
-  parameter_code %in% pm25_parameter_codes,
-  .SD[which.min(as.integer(cams_id))], by = aqs_site_id
+  , .SD[which.min(as.integer(cams_id))], by = aqs_site_id
 ]
 canonical_cams <- setNames(physical_sites$cams_id, physical_sites$aqs_site_id)
 sites[, canonical_cams_id := unname(canonical_cams[aqs_site_id])]
 sites[, download_selected := !is.na(canonical_cams_id) & cams_id == canonical_cams_id]
 
-# Keep the legacy columns as the union coverage used by metadata/cache code.
-sites[, first_month := as.Date(pmin(
-  get(parameter_column("first_month", "88101")),
-  get(parameter_column("first_month", "88502")), na.rm = TRUE
-), origin = "1970-01-01")]
+# Keep the legacy columns as union coverage used by metadata/cache code.
+first_columns <- parameter_column("first_month", supported_parameter_codes)
+last_columns <- parameter_column("download_last_month", supported_parameter_codes)
+first_values <- do.call(
+  pmin,
+  c(lapply(first_columns, function(column) as.numeric(sites[[column]])), na.rm = TRUE)
+)
+last_values <- do.call(
+  pmax,
+  c(lapply(last_columns, function(column) as.numeric(sites[[column]])), na.rm = TRUE)
+)
+sites[, first_month := as.Date(first_values, origin = "1970-01-01")]
 sites[!is.finite(as.numeric(first_month)), first_month := as.Date(NA)]
-sites[, download_last_month := as.Date(pmax(
-  get(parameter_column("download_last_month", "88101")),
-  get(parameter_column("download_last_month", "88502")), na.rm = TRUE
-), origin = "1970-01-01")]
+sites[, download_last_month := as.Date(last_values, origin = "1970-01-01")]
 sites[!is.finite(as.numeric(download_last_month)), download_last_month := as.Date(NA)]
 
 data.table::fwrite(sites, inventory_path, na = "")
 message(
   "Found ", data.table::uniqueN(all_streams$aqs_site_id),
-  " physical DFW PM2.5 monitoring locations; processing ",
+  " physical DFW monitoring locations with supported measurements; processing ",
   nrow(selected_streams), " of ", nrow(all_streams), " site-parameter streams (",
   nrow(eligible_cams), " eligible CAMS aliases)."
 )
@@ -605,7 +625,10 @@ summary <- data.table::data.table(
   latest_complete_month = format(complete_month, "%Y-%m"),
   dfw_cams_entries = nrow(sites),
   dashboard_cams_menu_entries = data.table::uniqueN(eligible_cams[, .(cams_id, aqs_site_id)]),
-  pm25_monitoring_locations = data.table::uniqueN(all_streams$aqs_site_id),
+  dashboard_monitoring_locations = data.table::uniqueN(all_streams$aqs_site_id),
+  pm25_monitoring_locations = data.table::uniqueN(all_streams[
+    parameter_code %in% pm25_parameter_codes, aqs_site_id
+  ]),
   dashboard_site_parameter_streams = nrow(all_streams),
   monthly_requests = nrow(manifest),
   downloaded = download_count,
