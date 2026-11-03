@@ -115,6 +115,7 @@ load_bundle <- tceq_dashboard_bundle_loader(cache_dir, max_cached_sites)
 regional_cache_files <- c(
   daily = "regional_daily.rds", reach = "regional_reach.rds",
   links = "regional_event_links.rds", hourly_index = "regional_hourly_index.rds",
+  measurement_daily = "regional_measurement_daily.rds",
   spatial = "spatial_support.rds", validation = "spatial_validation.rds"
 )
 regional_hourly_files <- if (!is.null(cache_manifest$regional_analysis$hourly_files)) {
@@ -225,8 +226,10 @@ ui <- bslib::page_sidebar(
       "  var overlays = {}, legends = {};\n",
       "  var palette = ['#440154','#414487','#2A788E','#22A884','#7AD151','#FDE725'];\n",
       "  function hexToRgb(hex) { return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)]; }\n",
-      "  function color(value, upper) {\n",
-      "    var t = Math.max(0, Math.min(1, value / upper));\n",
+      "  function color(value, lower, upper) {\n",
+      "    lower = Number.isFinite(lower) ? lower : 0;\n",
+      "    var span = Math.max(1e-9, upper - lower);\n",
+      "    var t = Math.max(0, Math.min(1, (value - lower) / span));\n",
       "    var p = t * (palette.length - 1), i = Math.min(palette.length - 2, Math.floor(p)), f = p - i;\n",
       "    var a = hexToRgb(palette[i]), b = hexToRgb(palette[i + 1]);\n",
       "    return [Math.round(a[0]+f*(b[0]-a[0])), Math.round(a[1]+f*(b[1]-a[1])), Math.round(a[2]+f*(b[2]-a[2])), 190];\n",
@@ -238,7 +241,7 @@ ui <- bslib::page_sidebar(
       "      if (value === 3) return [217,119,6,215];\n",
       "      return [0,0,0,0];\n",
       "    }\n",
-      "    return color(value, message.upper);\n",
+      "    return color(value, message.lower, message.upper);\n",
       "  }\n",
       "  function legendRow(container, colorValue, label, markerClass) {\n",
       "    var row = L.DomUtil.create('div', 'pm25-legend-row', container);\n",
@@ -331,7 +334,10 @@ ui <- bslib::page_sidebar(
   sidebar = bslib::sidebar(
     width = 370,
     shiny::conditionalPanel(
-      condition = "input.dashboard_tabs != 'regional'",
+      condition = paste(
+        "input.dashboard_tabs != 'spatial' &&",
+        "!(input.dashboard_tabs == 'events' && input.event_tabs != 'single_site')"
+      ),
       shiny::selectInput(
         "data_source", "Monitoring network",
         choices = c(
@@ -385,9 +391,12 @@ ui <- bslib::page_sidebar(
       )
     ),
     shiny::conditionalPanel(
-      condition = "input.dashboard_tabs == 'regional'",
+      condition = paste(
+        "input.dashboard_tabs == 'events' &&",
+        "(input.event_tabs == 'regional' || input.event_tabs == 'maps')"
+      ),
       shiny::conditionalPanel(
-        condition = "input.regional_tabs == 'Event alignment'",
+        condition = "input.event_tabs == 'regional'",
         shiny::selectInput(
           "regional_event_network", "Anchor network",
           choices = c(
@@ -418,6 +427,17 @@ ui <- bslib::page_sidebar(
         ),
         shiny::uiOutput("regional_event_filter_status")
       ),
+      shiny::conditionalPanel(
+        condition = "input.event_tabs == 'maps'",
+        shiny::selectizeInput(
+          "regional_map_event", "Multi-day particulate event",
+          choices = anchor_choices, selected = default_anchor,
+          options = list(maxOptions = 5000)
+        ),
+        shiny::helpText(
+          "Selecting an MDPE sets the map window to the event plus two context days on each side. You can then edit the dates directly."
+        )
+      ),
       shiny::dateRangeInput(
         "regional_dates", "Regional date window",
         start = default_dates[1], end = default_dates[2],
@@ -425,7 +445,7 @@ ui <- bslib::page_sidebar(
         format = "yyyy-mm-dd", separator = " to "
       ),
       shiny::conditionalPanel(
-        condition = "input.regional_tabs == 'Spatial surface'",
+        condition = "input.event_tabs == 'maps'",
         shiny::div(
           class = "regional-spatial-controls",
           shiny::selectInput(
@@ -470,7 +490,7 @@ ui <- bslib::page_sidebar(
       ),
       shiny::uiOutput("regional_cache_status"),
       shiny::conditionalPanel(
-        condition = "input.regional_tabs == 'Event alignment'",
+        condition = "input.event_tabs == 'regional'",
         shiny::div(
           class = "download-row",
           shiny::downloadButton(
@@ -484,13 +504,77 @@ ui <- bslib::page_sidebar(
         )
       ),
       shiny::conditionalPanel(
-        condition = "input.regional_tabs == 'Spatial surface'",
+        condition = "input.event_tabs == 'maps'",
         shiny::div(
           class = "download-row",
           shiny::downloadButton(
             "download_regional_grid", "Download current grid",
             class = "pm25-client-download"
           )
+        )
+      )
+    ),
+    shiny::conditionalPanel(
+      condition = "input.dashboard_tabs == 'spatial'",
+      shiny::div(
+        class = "regional-spatial-controls",
+      shiny::selectInput(
+        "spatial_measurement", "Measurement",
+        choices = stats::setNames(
+          tceq_dashboard_measurement_catalog()$key,
+          tceq_dashboard_measurement_catalog()$label
+        ),
+        selected = "pm25"
+      ),
+      shiny::selectInput(
+        "spatial_map_view", "Surface network",
+        choices = c("Combined", "TCEQ", "Dallas AQMesh", "Disagreement"),
+        selected = "Combined"
+      ),
+      shiny::selectInput(
+        "spatial_metric", "Daily statistic",
+        choices = c("Daily average" = "daily_avg", "Daily maximum" = "daily_max"),
+        selected = "daily_avg"
+      ),
+      shiny::dateRangeInput(
+        "spatial_dates", "Date window",
+        start = default_dates[1], end = default_dates[2],
+        min = min(station_index$first_date), max = max(station_index$last_date),
+        format = "yyyy-mm-dd", separator = " to "
+      ),
+      shiny::uiOutput("spatial_frame_control"),
+      shiny::selectInput(
+        "spatial_layer", "Map layer",
+        choices = c(
+          "Interpolated measurement" = "concentration",
+          "Nearby sensor count" = "support_count",
+          "Nearest sensor distance" = "nearest_distance",
+          "Contributing network" = "network_contribution"
+        ), selected = "concentration"
+      ),
+      shiny::checkboxInput(
+        "spatial_adaptive", "Adaptive scale for static frame", FALSE
+      ),
+      shiny::checkboxInput(
+        "spatial_compare", "Compare TCEQ and AQMesh maps", FALSE
+      ),
+      shiny::selectInput(
+        "spatial_speed", "Animation speed",
+        choices = c("Slow" = "1800", "Normal" = "1000", "Fast" = "500"),
+        selected = "1000"
+      ),
+      shiny::actionButton(
+        "spatial_generate", "Generate & play animation",
+        icon = shiny::icon("play")
+      ),
+      shiny::uiOutput("spatial_animation_status"),
+      shiny::uiOutput("spatial_cache_status")
+      ),
+      shiny::div(
+        class = "download-row",
+        shiny::downloadButton(
+          "download_spatial_grid", "Download current grid",
+          class = "pm25-client-download"
         )
       )
     )
@@ -536,7 +620,32 @@ ui <- bslib::page_sidebar(
       shiny::p(class = "method-note", shiny::textOutput("heatmap_caption", inline = TRUE))
     ),
     bslib::nav_panel(
-      "Events",
+      "Patterns",
+      bslib::layout_columns(
+        col_widths = c(6, 6),
+        bslib::card(
+          full_screen = TRUE,
+          bslib::card_header(shiny::textOutput("diurnal_title", inline = TRUE)),
+          plotly::plotlyOutput("diurnal_plot", height = "390px")
+        ),
+        bslib::card(
+          full_screen = TRUE,
+          bslib::card_header(shiny::textOutput("seasonal_title", inline = TRUE)),
+          plotly::plotlyOutput("seasonal_plot", height = "390px")
+        )
+      ),
+      bslib::card(
+        full_screen = TRUE,
+        bslib::card_header(shiny::textOutput("long_term_title", inline = TRUE)),
+        plotly::plotlyOutput("long_term_plot", height = "500px")
+      )
+    ),
+    bslib::nav_panel(
+      "Events", value = "events",
+      bslib::navset_card_tab(
+        id = "event_tabs",
+        bslib::nav_panel(
+          "Single Site", value = "single_site",
       bslib::layout_columns(
         col_widths = c(7, 5),
         bslib::card(
@@ -590,13 +699,9 @@ ui <- bslib::page_sidebar(
           "One adequately observed non-core trough day may bridge core days."
         )
       )
-    ),
-    bslib::nav_panel(
-      "Regional analysis", value = "regional",
-      bslib::navset_card_tab(
-        id = "regional_tabs",
+        ),
         bslib::nav_panel(
-          "Event alignment",
+          "Regional", value = "regional",
           bslib::layout_columns(
             col_widths = c(3, 3, 3, 3),
             metric_box("Peak balanced reach", "regional_kpi_reach"),
@@ -633,7 +738,7 @@ ui <- bslib::page_sidebar(
           )
         ),
         bslib::nav_panel(
-          "Spatial surface",
+          "Maps", value = "maps",
           shiny::uiOutput("regional_surface_summary"),
           shiny::conditionalPanel(
             condition = "!input.regional_compare",
@@ -674,24 +779,38 @@ ui <- bslib::page_sidebar(
       )
     ),
     bslib::nav_panel(
-      "Patterns",
-      bslib::layout_columns(
-        col_widths = c(6, 6),
+      "Spatial explorer", value = "spatial",
+      shiny::uiOutput("spatial_surface_summary"),
+      shiny::conditionalPanel(
+        condition = "!input.spatial_compare",
         bslib::card(
-          full_screen = TRUE,
-          bslib::card_header(shiny::textOutput("diurnal_title", inline = TRUE)),
-          plotly::plotlyOutput("diurnal_plot", height = "390px")
-        ),
-        bslib::card(
-          full_screen = TRUE,
-          bslib::card_header(shiny::textOutput("seasonal_title", inline = TRUE)),
-          plotly::plotlyOutput("seasonal_plot", height = "390px")
+          full_screen = TRUE, fill = FALSE, class = "regional-map-card",
+          bslib::card_header("Exploratory multi-measurement surface"),
+          leaflet::leafletOutput("spatial_surface_map", height = "690px")
         )
       ),
-      bslib::card(
-        full_screen = TRUE,
-        bslib::card_header(shiny::textOutput("long_term_title", inline = TRUE)),
-        plotly::plotlyOutput("long_term_plot", height = "500px")
+      shiny::conditionalPanel(
+        condition = "input.spatial_compare",
+        bslib::layout_columns(
+          col_widths = c(6, 6),
+          bslib::card(
+            full_screen = TRUE, fill = FALSE, class = "regional-map-card",
+            bslib::card_header("TCEQ surface"),
+            leaflet::leafletOutput("spatial_tceq_map", height = "620px")
+          ),
+          bslib::card(
+            full_screen = TRUE, fill = FALSE, class = "regional-map-card",
+            bslib::card_header("Dallas AQMesh surface"),
+            leaflet::leafletOutput("spatial_aqmesh_map", height = "620px")
+          )
+        )
+      ),
+      shiny::p(
+        class = "method-note",
+        paste(
+          "Daily surfaces are available for PM2.5, PM10, NO₂, O₃, temperature, and relative humidity where monitoring support is adequate.",
+          "Blank areas are intentionally not extrapolated. AQMesh and Combined views are exploratory and non-regulatory."
+        )
       )
     ),
     bslib::nav_panel(

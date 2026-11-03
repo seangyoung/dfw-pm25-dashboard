@@ -102,6 +102,7 @@ site_summaries <- list()
 daily_indexes <- list()
 event_indexes <- list()
 regional_hourly_rows <- list()
+regional_measurement_daily_rows <- list()
 
 message("Normalizing ", nrow(tceq_stations), " TCEQ site bundles...")
 for (site_id in tceq_stations$aqs_site_id) {
@@ -152,6 +153,10 @@ for (site_id in tceq_stations$aqs_site_id) {
     )
   daily_indexes[[site_id]] <- bundle$daily
   event_indexes[[site_id]] <- bundle$events
+  regional_measurement_daily_rows[[site_id]] <-
+    pm25_build_regional_measurement_daily(
+      bundle$hourly, bundle$metadata[1, , drop = FALSE]
+    )
   regional_hourly_rows[[site_id]] <- bundle$hourly |>
     dplyr::filter(!is.na(.data$total_records)) |>
     dplyr::select(
@@ -249,6 +254,10 @@ for (site_id in field_ids) {
     )
   daily_indexes[[site_id]] <- daily
   event_indexes[[site_id]] <- events
+  regional_measurement_daily_rows[[site_id]] <-
+    pm25_build_regional_measurement_daily(
+      hourly, tibble::tibble(data_source = "Dallas AQMesh")
+    )
   regional_hourly_rows[[site_id]] <- hourly_utc |>
     dplyr::select(
       "aqs_site_id", "datetime_utc", "composite_pm25_ug_m3"
@@ -276,6 +285,10 @@ regional_reach <- pm25_daily_reach(regional_daily)
 regional_event_links <- pm25_build_regional_event_links(
   event_index, station_index
 )
+regional_measurement_daily <- dplyr::bind_rows(
+  regional_measurement_daily_rows
+) |>
+  dplyr::arrange(.data$measurement, .data$date, .data$aqs_site_id)
 regional_hourly <- pm25_build_regional_hourly(
   dplyr::bind_rows(regional_hourly_rows), station_index
 )
@@ -294,6 +307,10 @@ atomic_save_rds_xz(regional_daily, file.path(cache_dir, "regional_daily.rds"))
 atomic_save_rds_xz(regional_reach, file.path(cache_dir, "regional_reach.rds"))
 atomic_save_rds_xz(
   regional_event_links, file.path(cache_dir, "regional_event_links.rds")
+)
+atomic_save_rds_xz(
+  regional_measurement_daily,
+  file.path(cache_dir, "regional_measurement_daily.rds")
 )
 hourly_directory <- file.path(cache_dir, "regional_hourly")
 hourly_temporary <- tempfile("regional_hourly_", tmpdir = cache_dir)
@@ -323,6 +340,7 @@ regional_files <- c(
   regional_daily = "regional_daily.rds",
   regional_reach = "regional_reach.rds",
   regional_event_links = "regional_event_links.rds",
+  regional_measurement_daily = "regional_measurement_daily.rds",
   regional_hourly_index = "regional_hourly_index.rds",
   spatial_support = "spatial_support.rds",
   spatial_validation = "spatial_validation.rds"
@@ -330,7 +348,7 @@ regional_files <- c(
 regional_hourly_files <- regional_hourly$index$years$file
 all_regional_files <- c(regional_files, regional_hourly_files)
 manifest <- list(
-  schema_version = 7L,
+  schema_version = 8L,
   generated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
   data_sources = c("TCEQ", "Dallas AQMesh"),
   source_counts = as.list(table(station_index$data_source)),
@@ -384,6 +402,8 @@ manifest <- list(
     balanced_participation_minimum_network_sites = 3L,
     hourly_rows = sum(regional_hourly$index$years$rows),
     hourly_files = as.list(regional_hourly_files),
+    measurement_daily_rows = nrow(regional_measurement_daily),
+    measurements = as.list(sort(unique(regional_measurement_daily$measurement))),
     grid_cells = sum(spatial_support$grid$inside_region),
     validation = spatial_validation,
     files = as.list(regional_files),

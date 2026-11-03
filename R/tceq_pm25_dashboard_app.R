@@ -390,7 +390,8 @@ tceq_dashboard_server <- function(
       site = tceq_dashboard_default_site(station_index),
       window_days = 30L,
       pending_date_range = NULL,
-      regional_animation = NULL
+      regional_animation = NULL,
+      spatial_animation = NULL
     )
 
     available_stations <- shiny::reactive({
@@ -1413,8 +1414,7 @@ tceq_dashboard_server <- function(
       regional_events[row, , drop = FALSE]
     })
 
-    shiny::observeEvent(regional_anchor(), {
-      event <- regional_anchor()
+    update_regional_dates_for_event <- function(event) {
       start <- as.Date(event$start_date) - 2L
       end <- as.Date(event$end_date) + 2L
       if (as.integer(end - start) + 1L > 90L) end <- start + 89L
@@ -1422,7 +1422,28 @@ tceq_dashboard_server <- function(
         session, "regional_dates", start = start, end = end,
         min = min(station_index$first_date), max = max(station_index$last_date)
       )
+    }
+
+    shiny::observeEvent(regional_anchor(), {
+      if (!identical(input$event_tabs, "regional")) return()
+      update_regional_dates_for_event(regional_anchor())
     }, ignoreInit = FALSE)
+
+    regional_map_event <- shiny::reactive({
+      key <- input$regional_map_event
+      shiny::req(length(key) == 1L, !is.na(key), nzchar(key))
+      row <- match(key, regional_events$event_key)
+      shiny::req(!is.na(row))
+      regional_events[row, , drop = FALSE]
+    })
+
+    shiny::observeEvent(
+      list(input$regional_map_event, input$event_tabs),
+      {
+        if (!identical(input$event_tabs, "maps")) return()
+        update_regional_dates_for_event(regional_map_event())
+      }, ignoreInit = FALSE
+    )
 
     regional_dates <- shiny::reactive({
       dates <- suppressWarnings(as.Date(input$regional_dates))
@@ -1466,8 +1487,8 @@ tceq_dashboard_server <- function(
 
     regional_event_filter_data <- shiny::reactive({
       shiny::req(
-        identical(input$dashboard_tabs, "regional"),
-        identical(input$regional_tabs, "Event alignment")
+        identical(input$dashboard_tabs, "events"),
+        identical(input$event_tabs, "regional")
       )
       links <- regional_links()
       aligned <- links |>
@@ -1511,13 +1532,13 @@ tceq_dashboard_server <- function(
 
     shiny::observeEvent(
       list(
-        input$dashboard_tabs, input$regional_tabs,
+        input$dashboard_tabs, input$event_tabs,
         input$regional_event_network, input$regional_event_min_days,
         input$regional_event_min_sites
       ),
       {
-        if (!identical(input$dashboard_tabs, "regional") ||
-            !identical(input$regional_tabs, "Event alignment")) return()
+        if (!identical(input$dashboard_tabs, "events") ||
+            !identical(input$event_tabs, "regional")) return()
         data <- regional_filtered_events()
         choices <- if (nrow(data)) {
           stats::setNames(
@@ -2151,8 +2172,8 @@ tceq_dashboard_server <- function(
     }
 
     shiny::observe({
-      shiny::req(identical(input$dashboard_tabs, "regional"))
-      shiny::req(identical(input$regional_tabs, "Spatial surface"))
+      shiny::req(identical(input$dashboard_tabs, "events"))
+      shiny::req(identical(input$event_tabs, "maps"))
       surface <- regional_surface()
       frames <- regional_frame_sequence()
       frame <- frames[[regional_frame_index()]]
@@ -2195,7 +2216,7 @@ tceq_dashboard_server <- function(
     })
 
     shiny::observeEvent(
-      list(input$regional_tabs, input$regional_compare, input$dashboard_tabs),
+      list(input$event_tabs, input$regional_compare, input$dashboard_tabs),
       {
         session$sendCustomMessage(
           "pm25-map-resize",
@@ -2290,6 +2311,410 @@ tceq_dashboard_server <- function(
       )
     })
 
+    regional_measurement_daily <- shiny::reactive({
+      shiny::validate(shiny::need(
+        isTRUE(regional_available),
+        "Regional measurement cache unavailable. Run the one-command updater."
+      ))
+      load_regional("measurement_daily")
+    })
+
+    spatial_measurement_info <- shiny::reactive({
+      key <- input$spatial_measurement
+      if (is.null(key) || !nzchar(key)) key <- "pm25"
+      tceq_dashboard_measurement_info(key)
+    })
+
+    spatial_measurement_rows <- shiny::reactive({
+      key <- spatial_measurement_info()$key[[1]]
+      regional_measurement_daily() |>
+        dplyr::filter(.data$measurement == key)
+    })
+
+    shiny::observeEvent(
+      list(input$dashboard_tabs, input$spatial_measurement),
+      {
+        if (!identical(input$dashboard_tabs, "spatial")) return()
+        data <- spatial_measurement_rows() |>
+          dplyr::filter(
+            .data$eligible,
+            is.finite(.data$daily_average) | is.finite(.data$daily_maximum)
+          )
+        if (!nrow(data)) return()
+        bounds <- range(data$date, na.rm = TRUE)
+        start <- max(bounds[1], bounds[2] - 29L)
+        shiny::updateDateRangeInput(
+          session, "spatial_dates", start = start, end = bounds[2],
+          min = bounds[1], max = bounds[2]
+        )
+        rv$spatial_animation <- NULL
+      }, ignoreInit = FALSE
+    )
+
+    spatial_dates <- shiny::reactive({
+      dates <- suppressWarnings(as.Date(input$spatial_dates))
+      shiny::validate(shiny::need(
+        length(dates) == 2L && !anyNA(dates) && dates[1] <= dates[2],
+        "Select a valid spatial-explorer date range."
+      ))
+      shiny::validate(shiny::need(
+        as.integer(dates[2] - dates[1]) + 1L <= 90L,
+        "Spatial-explorer animations are limited to 90 daily frames."
+      ))
+      dates
+    })
+
+    spatial_frame_sequence <- shiny::reactive({
+      dates <- spatial_dates()
+      seq(dates[1], dates[2], by = "day")
+    })
+
+    output$spatial_frame_control <- shiny::renderUI({
+      frames <- spatial_frame_sequence()
+      if (!length(frames)) return(shiny::helpText("No frames are available."))
+      value <- shiny::isolate(input$spatial_frame)
+      if (length(value) != 1L || is.na(value) ||
+          value < 1L || value > length(frames)) value <- 1L
+      interval <- suppressWarnings(as.integer(input$spatial_speed))
+      if (length(interval) != 1L || is.na(interval)) interval <- 1000L
+      shiny::sliderInput(
+        "spatial_frame", "Animation frame", min = 1L, max = length(frames),
+        value = value, step = 1L,
+        animate = shiny::animationOptions(
+          interval = interval, loop = FALSE,
+          playButton = "Play", pauseButton = "Pause"
+        )
+      )
+    })
+
+    spatial_frame_index <- shiny::reactive({
+      frames <- spatial_frame_sequence()
+      index <- suppressWarnings(as.integer(input$spatial_frame))
+      if (length(index) != 1L || is.na(index) ||
+          index < 1L || index > length(frames)) index <- 1L
+      index
+    })
+
+    spatial_frame_values <- function(frame) {
+      field <- if (identical(input$spatial_metric, "daily_max")) {
+        "daily_maximum"
+      } else "daily_average"
+      data <- spatial_measurement_rows()
+      data <- data[data$date == as.Date(frame), , drop = FALSE]
+      values <- data[[field]]
+      values[!data$eligible] <- NA_real_
+      stats::setNames(values, data$aqs_site_id)
+    }
+
+    spatial_surface_key <- shiny::reactive({
+      paste(
+        input$spatial_measurement, input$spatial_metric,
+        input$spatial_map_view, paste(spatial_dates(), collapse = ":"),
+        sep = "|"
+      )
+    })
+
+    shiny::observeEvent(input$spatial_generate, {
+      frames <- spatial_frame_sequence()
+      shiny::validate(shiny::need(length(frames), "No frames are available."))
+      spatial <- regional_spatial()
+      rv$spatial_animation <- NULL
+      session$sendCustomMessage(
+        "tceq-set-disabled", list(id = "spatial_generate", disabled = TRUE)
+      )
+      shiny::updateActionButton(
+        session, "spatial_generate", label = "Generating animation…",
+        icon = shiny::icon("spinner", class = "fa-spin")
+      )
+      on.exit({
+        session$sendCustomMessage(
+          "tceq-set-disabled", list(id = "spatial_generate", disabled = FALSE)
+        )
+        shiny::updateActionButton(
+          session, "spatial_generate", label = "Generate & play animation",
+          icon = shiny::icon("play")
+        )
+      }, add = TRUE)
+      surfaces <- vector("list", length(frames))
+      shiny::withProgress(message = "Generating measurement animation", value = 0, {
+        for (i in seq_along(frames)) {
+          surfaces[[i]] <- pm25_interpolate_surface(
+            spatial_frame_values(frames[[i]]), spatial,
+            view = input$spatial_map_view
+          )
+          shiny::incProgress(1 / length(frames))
+        }
+      })
+      rv$spatial_animation <- list(
+        key = spatial_surface_key(), frames = surfaces
+      )
+      shiny::updateSliderInput(session, "spatial_frame", value = 1L)
+      if (length(frames) > 1L) {
+        session$onFlushed(function() {
+          session$sendCustomMessage(
+            "pm25-start-animation", list(id = "spatial_frame")
+          )
+        }, once = TRUE)
+      }
+      shiny::showNotification(
+        paste(length(frames), "frames ready; playback started."),
+        type = "message", duration = 4
+      )
+    }, ignoreInit = TRUE)
+
+    output$spatial_animation_status <- shiny::renderUI({
+      frames <- spatial_frame_sequence()
+      cached <- rv$spatial_animation
+      ready <- !is.null(cached) &&
+        identical(cached$key, spatial_surface_key()) &&
+        length(cached$frames) == length(frames)
+      shiny::div(
+        class = "cache-note",
+        if (ready) paste(
+          length(frames),
+          "frames are cached. Use Play, Pause, or the frame slider to review them."
+        ) else paste(
+          "The current daily frame is shown now. Generate the",
+          length(frames), "frame animation to cache and play the sequence."
+        )
+      )
+    })
+
+    spatial_surface <- shiny::reactive({
+      frames <- spatial_frame_sequence()
+      shiny::req(length(frames))
+      index <- spatial_frame_index()
+      cached <- rv$spatial_animation
+      if (!is.null(cached) && identical(cached$key, spatial_surface_key()) &&
+          length(cached$frames) >= index) {
+        return(cached$frames[[index]])
+      }
+      pm25_interpolate_surface(
+        spatial_frame_values(frames[[index]]), regional_spatial(),
+        view = input$spatial_map_view
+      )
+    })
+
+    output$spatial_surface_map <- leaflet::renderLeaflet({ regional_map_base() })
+    output$spatial_tceq_map <- leaflet::renderLeaflet({ regional_map_base("TCEQ") })
+    output$spatial_aqmesh_map <- leaflet::renderLeaflet({
+      regional_map_base("Dallas AQMesh")
+    })
+
+    spatial_surface_payload <- function(surface, view, id, frame_labels) {
+      spatial <- regional_spatial()
+      info <- spatial_measurement_info()
+      values <- surface$value
+      supported <- surface$supported
+      lower <- info$fixed_min[[1]]
+      upper <- info$fixed_max[[1]]
+      categorical <- NULL
+      adaptive_active <- FALSE
+      if (identical(view, "Disagreement")) {
+        lower <- 0
+        upper <- max(5, (info$fixed_max[[1]] - info$fixed_min[[1]]) / 4)
+      }
+      if (identical(input$spatial_layer, "support_count")) {
+        values <- if (identical(view, "TCEQ")) surface$tceq$nearby_count else
+          if (identical(view, "Dallas AQMesh")) surface$aqmesh$nearby_count else
+            surface$nearby_count
+        supported <- spatial$grid$inside_region
+        lower <- 0
+        upper <- 8
+      } else if (identical(input$spatial_layer, "nearest_distance")) {
+        values <- if (identical(view, "TCEQ")) surface$tceq$nearest_m else
+          if (identical(view, "Dallas AQMesh")) surface$aqmesh$nearest_m else
+            surface$nearest_m
+        values <- values / 1000
+        supported <- spatial$grid$inside_region & is.finite(values)
+        lower <- 0
+        upper <- 25
+      } else if (identical(input$spatial_layer, "network_contribution")) {
+        values <- if (identical(view, "TCEQ")) {
+          ifelse(surface$tceq$supported, 1, NA_real_)
+        } else if (identical(view, "Dallas AQMesh")) {
+          ifelse(surface$aqmesh$supported, 2, NA_real_)
+        } else match(
+          surface$contribution, c("TCEQ only", "AQMesh only", "Both networks")
+        )
+        supported <- spatial$grid$inside_region & is.finite(values)
+        lower <- 0
+        upper <- 3
+        categorical <- "contribution"
+      } else if (isTRUE(input$spatial_adaptive) &&
+                 (is.null(rv$spatial_animation) ||
+                    !identical(rv$spatial_animation$key, spatial_surface_key())) &&
+                 any(is.finite(values))) {
+        limits <- stats::quantile(values, c(0.01, 0.99), na.rm = TRUE)
+        if (is.finite(limits[[1]]) && is.finite(limits[[2]]) &&
+            limits[[2]] > limits[[1]]) {
+          lower <- unname(limits[[1]])
+          upper <- unname(limits[[2]])
+          adaptive_active <- TRUE
+        }
+      }
+      values[!supported | !spatial$grid$inside_region] <- NA_real_
+      rows <- length(spatial$y_values)
+      columns <- length(spatial$x_values)
+      canvas <- rep(NA_real_, rows * columns)
+      cell <- (spatial$grid$row - 1L) * columns + spatial$grid$column
+      canvas[cell] <- values
+      sensors <- if (identical(view, "TCEQ")) {
+        "TCEQ"
+      } else if (identical(view, "Dallas AQMesh")) {
+        "Dallas AQMesh"
+      } else c("TCEQ", "Dallas AQMesh")
+      legend <- if (identical(input$spatial_layer, "network_contribution")) {
+        list(type = "categorical", title = "Contributing network", sensors = sensors)
+      } else {
+        title <- if (identical(input$spatial_layer, "support_count")) {
+          "Nearby valid sensors"
+        } else if (identical(input$spatial_layer, "nearest_distance")) {
+          "Nearest valid sensor (km)"
+        } else if (identical(view, "Disagreement")) {
+          paste0("Absolute network difference (", info$unit[[1]], ")")
+        } else paste0(info$short_label[[1]], " (", info$unit[[1]], ")")
+        high <- if (identical(input$spatial_layer, "concentration") &&
+                    !adaptive_active && isTRUE(info$zero_based[[1]])) {
+          paste0(format(round(upper, 1), trim = TRUE), "+")
+        } else format(round(upper, 1), trim = TRUE)
+        list(
+          type = "continuous", title = title,
+          low = format(round(lower, 1), trim = TRUE),
+          mid = format(round((lower + upper) / 2, 1), trim = TRUE),
+          high = high, sensors = sensors, frame = as.character(frame_labels)
+        )
+      }
+      if (is.null(legend$frame)) legend$frame <- as.character(frame_labels)
+      list(
+        id = id, rows = rows, cols = columns, values = canvas,
+        lower = unname(lower), upper = unname(upper), categorical = categorical,
+        bounds = as.list(spatial$bounds), fit = FALSE, legend = legend
+      )
+    }
+
+    update_spatial_markers <- function(map_id, values, network = NULL) {
+      locations <- station_index
+      if (!is.null(network)) {
+        locations <- locations[locations$data_source == network, , drop = FALSE]
+      }
+      locations$value <- unname(values[match(locations$aqs_site_id, names(values))])
+      info <- spatial_measurement_info()
+      label <- sprintf(
+        "%s · %s<br>%s: %s",
+        htmltools::htmlEscape(locations$site_name),
+        htmltools::htmlEscape(locations$data_source), info$short_label[[1]],
+        ifelse(
+          is.finite(locations$value),
+          paste0(sprintf("%.1f", locations$value), " ", info$unit[[1]]), "missing"
+        )
+      )
+      leaflet::leafletProxy(map_id, session = session, data = locations) |>
+        leaflet::clearGroup("measurements") |>
+        leaflet::addCircleMarkers(
+          lng = ~longitude, lat = ~latitude,
+          radius = ifelse(locations$data_source == "TCEQ", 7, 4),
+          color = ifelse(locations$data_source == "TCEQ", "#0F766E", "#7C3AED"),
+          fillColor = ifelse(
+            locations$data_source == "TCEQ", "#0F766E", "#7C3AED"
+          ),
+          fillOpacity = ifelse(is.finite(locations$value), 0.95, 0.28),
+          weight = 2, group = "measurements", label = lapply(label, htmltools::HTML)
+        )
+    }
+
+    shiny::observe({
+      shiny::req(identical(input$dashboard_tabs, "spatial"))
+      surface <- spatial_surface()
+      frames <- spatial_frame_sequence()
+      frame <- frames[[spatial_frame_index()]]
+      frame_labels <- paste0("Date: ", as.character(as.Date(frame)))
+      values <- spatial_frame_values(frame)
+      if (isTRUE(input$spatial_compare)) {
+        tceq_surface <- surface
+        tceq_surface$value <- surface$tceq$value
+        tceq_surface$supported <- surface$tceq$supported
+        aqmesh_surface <- surface
+        aqmesh_surface$value <- surface$aqmesh$value
+        aqmesh_surface$supported <- surface$aqmesh$supported
+        session$sendCustomMessage(
+          "pm25-surface-frame",
+          spatial_surface_payload(
+            tceq_surface, "TCEQ", "spatial_tceq_map", frame_labels
+          )
+        )
+        session$sendCustomMessage(
+          "pm25-surface-frame",
+          spatial_surface_payload(
+            aqmesh_surface, "Dallas AQMesh", "spatial_aqmesh_map", frame_labels
+          )
+        )
+        update_spatial_markers("spatial_tceq_map", values, "TCEQ")
+        update_spatial_markers(
+          "spatial_aqmesh_map", values, "Dallas AQMesh"
+        )
+      } else {
+        session$sendCustomMessage(
+          "pm25-surface-frame",
+          spatial_surface_payload(
+            surface, input$spatial_map_view, "spatial_surface_map", frame_labels
+          )
+        )
+        update_spatial_markers("spatial_surface_map", values)
+      }
+    })
+
+    shiny::observeEvent(
+      list(input$spatial_compare, input$dashboard_tabs),
+      {
+        session$sendCustomMessage(
+          "pm25-map-resize",
+          c("spatial_surface_map", "spatial_tceq_map", "spatial_aqmesh_map")
+        )
+        session$sendCustomMessage("pm25-sidebar-top", list())
+      }, ignoreInit = TRUE
+    )
+
+    output$spatial_surface_summary <- shiny::renderUI({
+      info <- spatial_measurement_info()
+      frames <- spatial_frame_sequence()
+      frame <- frames[[spatial_frame_index()]]
+      surface <- spatial_surface()
+      statistic <- if (identical(input$spatial_metric, "daily_max")) {
+        "daily maximum"
+      } else "daily average"
+      shiny::div(
+        class = "regional-summary",
+        shiny::strong(paste0(
+          info$label[[1]], " · ", statistic, " · ", as.character(as.Date(frame))
+        )),
+        shiny::span(paste0(
+          "Valid sensors: ", surface$valid_tceq, " TCEQ + ",
+          surface$valid_aqmesh, " AQMesh"
+        )),
+        shiny::span(paste0(
+          "Supported grid cells: ", format(sum(surface$supported), big.mark = ",")
+        )),
+        shiny::span(
+          class = "validation-note",
+          "Daily station values require at least 18 valid hourly observations."
+        )
+      )
+    })
+
+    output$spatial_cache_status <- shiny::renderUI({
+      if (!isTRUE(regional_available)) {
+        return(shiny::div(
+          class = "cache-alert",
+          "Regional measurement cache missing. Run the one-command updater."
+        ))
+      }
+      shiny::div(
+        class = "cache-note",
+        "Measurement-wide daily data load only when Spatial explorer is opened."
+      )
+    })
+
     send_csv_download <- function(filename, data) {
       session$sendCustomMessage(
         "pm25-download-csv",
@@ -2340,6 +2765,40 @@ tceq_dashboard_server <- function(
       ) |>
         dplyr::filter(.data$inside_region)
     })
+    spatial_grid_filename <- shiny::reactive({
+      frame <- spatial_frame_sequence()[[spatial_frame_index()]]
+      name <- paste0(
+        "dfw_", input$spatial_measurement, "_grid_",
+        input$spatial_map_view, "_", as.character(as.Date(frame)), ".csv"
+      )
+      gsub("[^A-Za-z0-9_.-]", "_", name)
+    })
+    spatial_grid_download <- shiny::reactive({
+      surface <- spatial_surface()
+      spatial <- regional_spatial()
+      frame <- spatial_frame_sequence()[[spatial_frame_index()]]
+      info <- spatial_measurement_info()
+      tibble::tibble(
+        date = as.Date(frame),
+        measurement = info$key[[1]],
+        measurement_label = info$label[[1]],
+        unit = info$unit[[1]],
+        statistic = input$spatial_metric,
+        surface_view = input$spatial_map_view,
+        longitude = spatial$grid$longitude,
+        latitude = spatial$grid$latitude,
+        inside_region = spatial$grid$inside_region,
+        supported = surface$supported,
+        interpolated_value = surface$value,
+        tceq_value = surface$tceq$value,
+        aqmesh_value = surface$aqmesh$value,
+        absolute_network_disagreement = surface$disagreement,
+        nearby_sensor_count = surface$nearby_count,
+        nearest_sensor_km = surface$nearest_m / 1000,
+        network_contribution = surface$contribution
+      ) |>
+        dplyr::filter(.data$inside_region)
+    })
 
     shiny::observeEvent(input$download_regional_reach_request, {
       send_csv_download(regional_reach_filename(), regional_window_reach())
@@ -2349,6 +2808,9 @@ tceq_dashboard_server <- function(
     }, ignoreInit = TRUE)
     shiny::observeEvent(input$download_regional_grid_request, {
       send_csv_download(regional_grid_filename(), regional_grid_download())
+    }, ignoreInit = TRUE)
+    shiny::observeEvent(input$download_spatial_grid_request, {
+      send_csv_download(spatial_grid_filename(), spatial_grid_download())
     }, ignoreInit = TRUE)
 
     output$download_regional_reach <- shiny::downloadHandler(
@@ -2362,6 +2824,10 @@ tceq_dashboard_server <- function(
     output$download_regional_grid <- shiny::downloadHandler(
       filename = regional_grid_filename,
       content = function(file) readr::write_csv(regional_grid_download(), file, na = "")
+    )
+    output$download_spatial_grid <- shiny::downloadHandler(
+      filename = spatial_grid_filename,
+      content = function(file) readr::write_csv(spatial_grid_download(), file, na = "")
     )
 
     output$download_hourly <- shiny::downloadHandler(

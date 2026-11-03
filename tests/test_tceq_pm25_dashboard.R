@@ -324,6 +324,31 @@ stopifnot(
   )
 )
 
+# Measurement-wide regional daily caches retain units outside the data table,
+# require 18 valid hours for mapping, and preserve valid negative temperatures.
+regional_measurement_hourly_fixture <- tibble::tibble(
+  aqs_site_id = "a",
+  date = as.Date("2024-01-01") + rep(0:1, each = 24),
+  composite_pm25_ug_m3 = c(rep(12, 24), rep(18, 17), rep(NA_real_, 7)),
+  composite_temperature_c = c(seq(-5, 18, length.out = 24), rep(20, 24))
+)
+regional_measurement_daily_test <- pm25_build_regional_measurement_daily(
+  regional_measurement_hourly_fixture,
+  tibble::tibble(data_source = "TCEQ")
+)
+stopifnot(
+  identical(sort(unique(regional_measurement_daily_test$measurement)),
+            c("pm25", "temperature")),
+  nrow(regional_measurement_daily_test) == 4L,
+  !regional_measurement_daily_test$eligible[
+    regional_measurement_daily_test$measurement == "pm25" &
+      regional_measurement_daily_test$date == as.Date("2024-01-02")
+  ],
+  min(regional_measurement_daily_test$daily_average[
+    regional_measurement_daily_test$measurement == "temperature"
+  ]) > -5
+)
+
 # IDW requires supported geometry and blends network surfaces by local support.
 regional_spatial_fixture <- list(
   grid = tibble::tibble(
@@ -429,6 +454,9 @@ stopifnot(
   any(grepl("pm25-download-csv", app_ui_source, fixed = TRUE)),
   any(grepl("pm25-client-download", app_ui_source, fixed = TRUE)),
   any(grepl("download_regional_grid_request", app_server_source, fixed = TRUE)),
+  any(grepl("download_spatial_grid_request", app_server_source, fixed = TRUE)),
+  any(grepl("regional_measurement_daily", app_server_source, fixed = TRUE)),
+  any(grepl('"Spatial explorer"', app_ui_source, fixed = TRUE)),
   any(grepl("readr::format_csv", app_server_source, fixed = TRUE))
 )
 public_build_script <- file.path(find_repo_root(), "scripts", "build_shinylive.R")
@@ -656,6 +684,23 @@ regional_server_daily <- dplyr::bind_rows(
   )
 )
 regional_server_reach <- pm25_daily_reach(regional_server_daily)
+regional_server_measurements <- dplyr::bind_rows(
+  regional_server_daily |>
+    dplyr::transmute(
+      .data$aqs_site_id, .data$date, .data$data_source,
+      measurement = "pm25", .data$valid_hours,
+      daily_average = .data$computed_daily_avg_ug_m3,
+      daily_maximum = .data$computed_daily_max_ug_m3,
+      eligible = .data$event_eligible
+    ),
+  tibble::tibble(
+    aqs_site_id = c("site_a", "site_b"),
+    date = as.Date("2024-01-01"),
+    data_source = c("TCEQ", "Dallas AQMesh"),
+    measurement = "temperature", valid_hours = 24L,
+    daily_average = c(12, 14), daily_maximum = c(18, 20), eligible = TRUE
+  )
+)
 regional_server_links <- tibble::tibble(
   anchor_event_key = "site_a::MULTI_site_a_20240101",
   relationship = "shared_core", other_data_source = "Dallas AQMesh",
@@ -673,6 +718,7 @@ regional_loader <- function(name) switch(
   daily = regional_server_daily,
   reach = regional_server_reach,
   links = regional_server_links,
+  measurement_daily = regional_server_measurements,
   spatial = regional_spatial_fixture,
   NULL
 )
@@ -684,8 +730,8 @@ shiny::testServer(
   ),
   {
     session$setInputs(
-      dashboard_tabs = "regional",
-      regional_tabs = "Event alignment",
+      dashboard_tabs = "events",
+      event_tabs = "regional",
       regional_anchor = "site_a::MULTI_site_a_20240101",
       regional_dates = as.Date(c("2024-01-01", "2024-01-02")),
       regional_event_network = "All", regional_event_min_days = "2",
@@ -704,7 +750,11 @@ shiny::testServer(
       regional_filtered_events()$aligned_sites == 2L,
       regional_frame_index() == 1L
     )
-    session$setInputs(regional_tabs = "Spatial surface", regional_generate = 1L)
+    session$setInputs(
+      event_tabs = "maps",
+      regional_map_event = "site_a::MULTI_site_a_20240101",
+      regional_generate = 1L
+    )
     session$flushReact()
     fixed_scale_payload <- regional_surface_payload(
       regional_surface(), "Combined", "regional_surface_map",
@@ -736,5 +786,23 @@ shiny::testServer(
     )
     session$setInputs(download_regional_grid_request = 1L)
     session$flushReact()
+
+    session$setInputs(
+      dashboard_tabs = "spatial", spatial_measurement = "temperature",
+      spatial_metric = "daily_avg", spatial_map_view = "Combined",
+      spatial_layer = "concentration", spatial_adaptive = FALSE,
+      spatial_compare = FALSE, spatial_speed = "1000",
+      spatial_dates = as.Date(c("2024-01-01", "2024-01-01"))
+    )
+    session$flushReact()
+    spatial_payload <- spatial_surface_payload(
+      spatial_surface(), "Combined", "spatial_surface_map", "Date: 2024-01-01"
+    )
+    stopifnot(
+      spatial_frame_index() == 1L,
+      spatial_payload$lower == -10,
+      spatial_payload$upper == 45,
+      identical(spatial_payload$legend$title, "Temperature (°C)")
+    )
   }
 )

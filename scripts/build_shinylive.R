@@ -14,7 +14,8 @@ source(file.path(root, "R", "dallas_aqmesh.R"))
 
 regional_files <- c(
   "regional_daily.rds", "regional_reach.rds", "regional_event_links.rds",
-  "regional_hourly_index.rds", "spatial_support.rds", "spatial_validation.rds"
+  "regional_measurement_daily.rds", "regional_hourly_index.rds",
+  "spatial_support.rds", "spatial_validation.rds"
 )
 
 regional_manifest_files <- function(manifest) {

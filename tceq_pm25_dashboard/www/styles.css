@@ -134,7 +134,8 @@ body {
   background: var(--pm25-soft);
 }
 
-.regional-spatial-controls #regional_generate {
+.regional-spatial-controls #regional_generate,
+.regional-spatial-controls #spatial_generate {
   width: 100%;
 }
 

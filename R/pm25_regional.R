@@ -319,6 +319,64 @@ pm25_build_regional_hourly <- function(hourly_rows, station_index) {
   )
 }
 
+pm25_regional_measurement_catalog <- function() {
+  tibble::tribble(
+    ~measurement, ~label, ~unit, ~value_column,
+    ~fixed_min, ~fixed_max,
+    "pm25", "PM2.5", "µg/m³", "composite_pm25_ug_m3", 0, 30,
+    "pm10", "PM10", "µg/m³", "composite_pm10_ug_m3", 0, 100,
+    "no2", "Nitrogen dioxide (NO₂)", "ppb", "composite_no2_ppb", 0, 100,
+    "o3", "Ozone (O₃)", "ppb", "composite_o3_ppb", 0, 100,
+    "temperature", "Temperature", "°C", "composite_temperature_c", -10, 45,
+    "humidity", "Relative humidity", "%",
+    "composite_relative_humidity_percent", 0, 100
+  )
+}
+
+pm25_build_regional_measurement_daily <- function(
+    hourly_rows, station_record, minimum_valid_hours = 18L) {
+  require_packages(c("dplyr", "purrr", "tibble"))
+  required <- c("date", "aqs_site_id")
+  missing <- setdiff(required, names(hourly_rows))
+  if (length(missing)) {
+    stop("Regional measurement input is missing: ", paste(missing, collapse = ", "))
+  }
+  if (nrow(station_record) != 1L || !"data_source" %in% names(station_record)) {
+    stop("Regional measurement preparation requires one station record.")
+  }
+  minimum_valid_hours <- suppressWarnings(as.integer(minimum_valid_hours)[1])
+  if (is.na(minimum_valid_hours) || minimum_valid_hours < 1L) {
+    stop("minimum_valid_hours must be a positive integer.")
+  }
+  catalog <- pm25_regional_measurement_catalog()
+  purrr::map_dfr(seq_len(nrow(catalog)), function(i) {
+    value_column <- catalog$value_column[[i]]
+    if (!value_column %in% names(hourly_rows)) return(tibble::tibble())
+    values <- suppressWarnings(as.numeric(hourly_rows[[value_column]]))
+    keep <- is.finite(values) & !is.na(hourly_rows$date)
+    if (!any(keep)) return(tibble::tibble())
+    tibble::tibble(
+      aqs_site_id = as.character(hourly_rows$aqs_site_id[keep]),
+      date = as.Date(hourly_rows$date[keep]),
+      value = values[keep]
+    ) |>
+      dplyr::group_by(.data$aqs_site_id, .data$date) |>
+      dplyr::summarise(
+        valid_hours = dplyr::n(),
+        daily_average = mean(.data$value),
+        daily_maximum = max(.data$value),
+        .groups = "drop"
+      ) |>
+      dplyr::mutate(
+        data_source = as.character(station_record$data_source[[1]]),
+        measurement = catalog$measurement[[i]],
+        eligible = .data$valid_hours >= minimum_valid_hours,
+        .before = 3L
+      )
+  }) |>
+    dplyr::arrange(.data$measurement, .data$date)
+}
+
 pm25_download_county_boundary <- function(reference_dir, year = 2024L) {
   require_packages(c("curl", "sf"))
   dir.create(reference_dir, recursive = TRUE, showWarnings = FALSE)

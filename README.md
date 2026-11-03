@@ -18,14 +18,21 @@ available at the selected location. Temperature and humidity are presented as
 environmental context rather than pollutants. PM2.5 event and regional
 analyses remain PM2.5-specific regardless of this site-level choice.
 
-The **Regional analysis** section compares existing multi-day events directly
-across sensors and provides network-balanced reach summaries. Its spatial view
-uses separately calculated TCEQ and AQMesh inverse-distance-weighted surfaces,
-with Combined, network-specific, disagreement, support, and bounded animation
-views. Concentration surfaces and animation use a fixed 0–30+ µg/m³ color ramp
-by default; static frames may optionally use an adaptive scale. Unsupported
-areas remain blank. Event filters can narrow anchors by
-network, minimum duration, and the number of sites sharing a core event date.
+The **Events** section contains Single Site, Regional, and Maps views. Regional
+compares existing multi-day events directly across sensors and provides
+network-balanced reach summaries. Maps starts from a selected MDPE, adds two
+context days on each side, and leaves the resulting date window editable. Its
+spatial view uses separately calculated TCEQ and AQMesh inverse-distance-weighted
+surfaces, with Combined, network-specific, disagreement, support, and bounded
+animation views. PM2.5 concentration surfaces use a fixed 0–30+ µg/m³ color
+ramp by default; static frames may optionally use an adaptive scale.
+Unsupported areas remain blank.
+
+The separate **Spatial explorer** creates daily-average or daily-maximum
+surfaces and animations for PM2.5, PM10, NO2, O3, temperature, and relative
+humidity independent of identified events. Daily station values require at
+least 18 valid hourly observations. Measurement-wide daily data are prepared
+offline in a compact cache and loaded only when Spatial explorer is opened.
 
 ## Event definitions
 
