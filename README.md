@@ -13,7 +13,7 @@ or data. A synchronized selector switches between **Combined**, **TCEQ**, and
 
 At both TCEQ and Dallas AQMesh sites, a measurement selector switches the Overview, hourly
 heatmap, temporal-pattern plots, and visible-data download among PM2.5, PM10,
-NO2, O3, temperature, and relative humidity when those measurements are
+NO2, O3, SO2, CO, TVOC, temperature, and relative humidity when those measurements are
 available at the selected location. Temperature and humidity are presented as
 environmental context rather than pollutants. PM2.5 event and regional
 analyses remain PM2.5-specific regardless of this site-level choice.
@@ -29,7 +29,7 @@ ramp by default; static frames may optionally use an adaptive scale.
 Unsupported areas remain blank.
 
 The separate **Spatial explorer** creates daily-average or daily-maximum
-surfaces and animations for PM2.5, PM10, NO2, O3, temperature, and relative
+surfaces and animations for PM2.5, PM10, NO2, O3, SO2, CO, TVOC, temperature, and relative
 humidity independent of identified events. Daily station values require at
 least 18 valid hourly observations. Measurement-wide daily data are prepared
 offline in a compact cache and loaded only when Spatial explorer is opened.
@@ -57,18 +57,23 @@ The versioned deployment cache contains 17 public TCEQ monitoring locations and
 32 public City of Dallas AQMesh locations. The TCEQ site-hour composite prefers
 regulatory parameter 88101 and uses acceptable parameter 88502 only when no
 finite 88101 measurement is available. TCEQ site bundles also retain PM10
-(81102), NO2 (42602), O3 (44201), outdoor temperature (62101), and relative
+(81102), NO2 (42602), O3 (44201), SO2 (42401), CO (42101), outdoor temperature (62101), and relative
 humidity (62201) where reported; regulatory-QA records are preferred and
 temperature is converted from °F to °C. TCEQ 81102 PM10 is reported at
 standard conditions and is not treated as method-equivalent to the AQMesh
 scaled PM10 field. Clearly implausible numeric values are retained in the raw
 archive but excluded from dashboard composites. Dallas calculations use the City's
-scaled PM2.5, PM10, NO2, O3, temperature, and humidity fields and retain the
+scaled PM2.5, PM10, NO2, O3, SO2, CO, TVOC, temperature, and humidity fields and retain the
 latest append-date revision for each pod-hour. Measurement-specific QA excludes
 sentinels, negative values, incompatible gas units, non-reading gas states,
 fault statuses, and clearly implausible ranges from calculations. Underlying
 source records, quality flags, revision information, provenance,
 and file hashes are preserved in the prepared bundles.
+
+TVOC is available only from the non-regulatory Dallas AQMesh network. It is not
+blended with TCEQ total NMOC because those source fields are not equivalent
+measurements. AQMesh CO records reported in either ppm or ppb are normalized
+to ppm before aggregation.
 
 TCEQ timestamps are presented as local standard time without daylight-saving
 shifts. Dallas event continuity is calculated in UTC; local heatmap display
@@ -107,7 +112,7 @@ Rscript --vanilla scripts/08h_prepare_combined_pm25_dashboard.R
 
 Parameter 88101 remains primary at each site-hour; parameter 88502 is retained
 and used only as a fallback. The same acquisition script downloads TCEQ 81102,
-42602, 44201, 62101, and 62201 streams for dashboard PM2.5 sites when TCEQ
+42602, 44201, 42401, 42101, 62101, and 62201 streams for dashboard PM2.5 sites when TCEQ
 reports them. Raw parameter codes, units, POCs, report tables, QA statements,
 flags, and source filenames remain available for diagnostics. The Dallas
 workflow archives the original paginated ArcGIS responses and retains

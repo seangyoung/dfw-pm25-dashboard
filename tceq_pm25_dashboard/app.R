@@ -808,7 +808,10 @@ ui <- bslib::page_sidebar(
       shiny::p(
         class = "method-note",
         paste(
-          "Daily surfaces are available for PM2.5, PM10, NO₂, O₃, temperature, and relative humidity where monitoring support is adequate.",
+          paste(
+            "Daily surfaces are available for PM2.5, PM10, NO₂, O₃, SO₂, CO,",
+            "TVOC, temperature, and relative humidity where monitoring support is adequate."
+          ),
           "Blank areas are intentionally not extrapolated. AQMesh and Combined views are exploratory and non-regulatory."
         )
       )

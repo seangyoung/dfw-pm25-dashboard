@@ -94,6 +94,9 @@ for (month in unique(download_manifest$month)) {
     valid_scaled_pm10_rows = sum(is.finite(clean$pm10_ug_m3)),
     valid_scaled_no2_rows = sum(is.finite(clean$no2_ppb)),
     valid_scaled_o3_rows = sum(is.finite(clean$o3_ppb)),
+    valid_scaled_so2_rows = sum(is.finite(clean$so2_ppb)),
+    valid_scaled_co_rows = sum(is.finite(clean$co_ppm)),
+    valid_scaled_tvoc_rows = sum(is.finite(clean$tvoc_ppb)),
     valid_temperature_rows = sum(is.finite(clean$temperature_c)),
     valid_humidity_rows = sum(is.finite(clean$relative_humidity_percent)),
     field_site_rows = sum(clean$location_class == "field_site"),
@@ -151,6 +154,9 @@ metadata <- list(
     pm10 = "pm10_scaled in µg/m³",
     no2 = "no2_scaled records reported in ppb",
     o3 = "o3_scaled records reported in ppb",
+    so2 = "so2_scaled records reported in ppb",
+    co = "co_scaled records normalized to ppm from source ppm or ppb units",
+    tvoc = "tvoc_scaled records reported in ppb; Dallas AQMesh only",
     temperature = "temperature_f converted to degrees Celsius",
     relative_humidity = "humidity in percent"
   ),
@@ -158,9 +164,15 @@ metadata <- list(
     sentinel = "Values <= -900 are flagged SENTINEL and set to NA",
     negative = "Other negative scaled PM2.5 values are flagged NEG and set to NA",
     excluded_reading_status = c("Deliq", "Deliquescence", "Other Fault Zero"),
-    gas_units = "NO2 and O3 records not reported in ppb are retained raw but excluded",
+    gas_units = paste(
+      "NO2, O3, SO2, and TVOC records not reported in ppb are retained raw but excluded;",
+      "CO records reported in ppm or ppb are normalized to ppm"
+    ),
     gas_state = "Non-missing NO2 states other than Reading are excluded",
-    upper_bounds = list(pm10_ug_m3 = 5000, no2_ppb = 1000, o3_ppb = 1000),
+    upper_bounds = list(
+      pm10_ug_m3 = 5000, no2_ppb = 1000, o3_ppb = 1000,
+      so2_ppb = 10000, co_ppm = 100, tvoc_ppb = 100000
+    ),
     meteorology_bounds = list(
       temperature_c = c(-30, 60), relative_humidity_percent = c(0, 100)
     )

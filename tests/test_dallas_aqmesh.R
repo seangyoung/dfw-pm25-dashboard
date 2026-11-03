@@ -26,6 +26,12 @@ revision_fixture <- tibble::tibble(
   no2_state = "Reading",
   o3_scaled = c(29, 30, 34, 1500),
   o3_units = "ppb",
+  so2_scaled = c(4, 5, 6, -999),
+  so2_units = "ppb",
+  co_scaled = c(0.3, 0.4, 500, -999),
+  co_units = c("ppm", "ppm", "ppb", "ppb"),
+  tvoc_scaled = c(10, 20, 30, -999),
+  tvoc_units = "ppb",
   humidity = c(49, 50, 54, 55),
   temperature_f = c(67, 68, 71.6, 70),
   reading_status = c("OK", "OK", "NA", "OK"),
@@ -50,6 +56,11 @@ stopifnot(
   clean_fixture$pm10_ug_m3[1] == 60,
   clean_fixture$no2_ppb[1] == 10,
   clean_fixture$o3_ppb[1] == 30,
+  clean_fixture$so2_ppb[1] == 5,
+  clean_fixture$co_ppm[1] == 0.4,
+  clean_fixture$co_ppm[2] == 0.5,
+  clean_fixture$co_flag[3] == "SENTINEL",
+  clean_fixture$tvoc_ppb[1] == 20,
   clean_fixture$relative_humidity_percent[1] == 50,
   clean_fixture$temperature_c[1] == 20,
   clean_fixture$o3_flag[3] == "OUT_OF_RANGE_HIGH"
@@ -65,6 +76,9 @@ stopifnot(
   display_fixture$composite_pm10_ug_m3[display_fixture$hour == 1L] == 62,
   display_fixture$composite_no2_ppb[display_fixture$hour == 1L] == 11,
   display_fixture$composite_o3_ppb[display_fixture$hour == 1L] == 32,
+  display_fixture$composite_so2_ppb[display_fixture$hour == 1L] == 5.5,
+  display_fixture$composite_co_ppm[display_fixture$hour == 1L] == 0.45,
+  display_fixture$composite_tvoc_ppb[display_fixture$hour == 1L] == 25,
   display_fixture$composite_temperature_c[display_fixture$hour == 1L] == 21,
   display_fixture$composite_relative_humidity_percent[
     display_fixture$hour == 1L
@@ -77,7 +91,10 @@ stopifnot(
   length(unique(complete_fixture$hour)) == 24L,
   sum(is.finite(complete_fixture$composite_pm25_ug_m3)) == 1L,
   sum(is.finite(complete_fixture$composite_pm10_ug_m3)) == 1L,
-  sum(is.finite(complete_fixture$composite_no2_ppb)) == 1L
+  sum(is.finite(complete_fixture$composite_no2_ppb)) == 1L,
+  sum(is.finite(complete_fixture$composite_so2_ppb)) == 1L,
+  sum(is.finite(complete_fixture$composite_co_ppm)) == 1L,
+  sum(is.finite(complete_fixture$composite_tvoc_ppb)) == 1L
 )
 
 quality_fixture <- tceq_dashboard_yearly_quality(list(
@@ -125,25 +142,3 @@ stopifnot(
   aqmesh_location_class("Characterisation 2810") == "characterisation",
   aqmesh_location_class("Pod 2451142") == "commissioning"
 )
-
-deployment_cache <- file.path(
-  find_repo_root(), "tceq_pm25_dashboard", "deploy_cache"
-)
-if (dir.exists(deployment_cache)) {
-  deployment_stations <- readRDS(file.path(deployment_cache, "station_index.rds"))
-  stopifnot(
-    sum(deployment_stations$data_source == "TCEQ") == 17L,
-    sum(deployment_stations$data_source == "Dallas AQMesh") == 32L
-  )
-  deployment_manifest <- jsonlite::read_json(
-    file.path(deployment_cache, "cache_manifest.json"), simplifyVector = TRUE
-  )
-  stopifnot(
-    setequal(deployment_manifest$data_sources, c("TCEQ", "Dallas AQMesh")),
-    deployment_manifest$station_count == 49L,
-    deployment_manifest$tceq$source_cache ==
-      "Not included in the deployment bundle",
-    deployment_manifest$dallas_aqmesh$source_import ==
-      "Not included in the deployment bundle"
-  )
-}

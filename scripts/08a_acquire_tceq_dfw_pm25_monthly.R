@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 
 # Acquire monthly, hourly TCEQ reports for the dashboard's DFW PM2.5 sites.
-# PM2.5 plus the matching AQMesh measurements (PM10, NO2, O3, temperature, and
-# relative humidity) are retained as separate parameter streams. The TCEQ
+# PM2.5 plus the matching AQMesh measurements (PM10, NO2, O3, SO2, CO,
+# temperature, and relative humidity) are retained as separate parameter streams. The TCEQ
 # "comma-delimited" response is CSV text embedded in an HTML <pre> element, so
 # this script extracts the report text without changing its values and records
 # a request-level manifest.
@@ -27,11 +27,16 @@ parameter_arg <- grep("^--parameters=", args, value = TRUE)
 parameter_codes <- if (length(parameter_arg)) {
   strsplit(sub("^--parameters=", "", parameter_arg[1]), ",", fixed = TRUE)[[1]]
 } else {
-  c("88101", "88502", "81102", "42602", "44201", "62101", "62201")
+  c(
+    "88101", "88502", "81102", "42602", "44201", "42401", "42101",
+    "62101", "62201"
+  )
 }
 parameter_codes <- unique(trimws(parameter_codes))
 pm25_parameter_codes <- c("88101", "88502")
-supplemental_parameter_codes <- c("81102", "42602", "44201", "62101", "62201")
+supplemental_parameter_codes <- c(
+  "81102", "42602", "44201", "42401", "42101", "62101", "62201"
+)
 supported_parameter_codes <- c(pm25_parameter_codes, supplemental_parameter_codes)
 if (!length(parameter_codes) || any(!parameter_codes %in% supported_parameter_codes)) {
   stop(

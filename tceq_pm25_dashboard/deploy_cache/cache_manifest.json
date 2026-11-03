@@ -1,41 +1,47 @@
 {
-  "schema_version": 8,
-  "generated_at_utc": "2026-11-03 16:07:02 UTC",
+  "schema_version": 9,
+  "generated_at_utc": "2026-11-03 18:13:34 UTC",
   "data_sources": ["TCEQ", "Dallas AQMesh"],
   "source_counts": {
     "Dallas AQMesh": 32,
     "TCEQ": 17
   },
   "station_count": 49,
-  "hourly_composite_rows": 3360552,
-  "valid_hourly_values": 2123836,
-  "event_count": 3546,
+  "hourly_composite_rows": 3378600,
+  "valid_hourly_values": 2132497,
+  "event_count": 3551,
   "first_date": "1997-08-01",
-  "last_date": "2026-09-30",
+  "last_date": "2026-11-03",
   "preparation_command": "Rscript --vanilla scripts/08i_update_dfw_pm25_dashboard.R",
   "tceq": {
     "source_cache": "Not included in the deployment bundle",
-    "cache_manifest_sha256": "918abf7be2bf3f371d7e1f4c62c78398b8c99a90b27416c7b1f287c9566d3643",
-    "raw_manifest_sha256": "b2367d9a7b1a7d75d7e07fa4d94270ca27f28cdfdb2a0740915333e307921be9",
+    "cache_manifest_sha256": "a8745cf541d7e01e2402e6fb8abfc86972592dea49c3bc79c79bb1d8819896d1",
+    "raw_manifest_sha256": "eefb5d69f209b3f388d45137ba433fe8a10a5b0cd67f3c37468ffc0aeb95c09d",
     "parameter_priority": ["88101", "88502"],
     "analytical_values": {
       "pm25": "88101 with 88502 fallback in µg/m³",
       "pm10": "81102 in µg/m³",
       "no2": "42602 in ppb",
       "o3": "44201 in ppb",
+      "so2": "42401 in ppb",
+      "co": "42101 in ppm",
+      "tvoc": "Not included: TCEQ total NMOC is not treated as equivalent to AQMesh TVOC",
       "temperature": "62101 converted from degrees Fahrenheit to degrees Celsius",
       "relative_humidity": "62201 in percent"
     }
   },
   "dallas_aqmesh": {
     "source_import": "Not included in the deployment bundle",
-    "import_metadata_sha256": "b8360c26ecbef10dcaee0c16e0a85f8edea75812585feec056265bb0352815e2",
-    "raw_download_manifest_sha256": "22f4603a5c471e76e1f554be2f8e70f505b7e7cf562ef02e8564448d08b81f38",
+    "import_metadata_sha256": "f19927ac0378b5a76ce20318adf885659e76165b5a48aa479b5bd272bb742f77",
+    "raw_download_manifest_sha256": "91345b9ee3551908c89edb579c43f7a3634497c9811e803eeb5d7c56b98edb06",
     "analytical_values": {
       "pm25": "pm2_5_scaled in µg/m³",
       "pm10": "pm10_scaled in µg/m³",
       "no2": "no2_scaled ppb records",
       "o3": "o3_scaled ppb records",
+      "so2": "so2_scaled ppb records",
+      "co": "co_scaled records normalized to ppm from source ppm or ppb units",
+      "tvoc": "tvoc_scaled ppb records; AQMesh-only and non-regulatory",
       "temperature": "temperature_f converted to degrees Celsius",
       "relative_humidity": "humidity in percent"
     },
@@ -45,7 +51,7 @@
   "regional_analysis": {
     "boundary": "NCTCOG 16-county region",
     "boundary_source_url": "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_county_500k.zip",
-    "boundary_retrieved_at_utc": "2026-11-03 16:06:45 UTC",
+    "boundary_retrieved_at_utc": "2026-11-03 18:13:16 UTC",
     "analysis_crs": 3083,
     "grid_resolution_m": 4000,
     "idw_power": 2,
@@ -54,59 +60,59 @@
     "support_nearest_m": 25000,
     "support_minimum_nearby_sites": 3,
     "balanced_participation_minimum_network_sites": 3,
-    "hourly_rows": 234480,
+    "hourly_rows": 235269,
     "hourly_files": ["regional_hourly/year_2000.rds", "regional_hourly/year_2001.rds", "regional_hourly/year_2002.rds", "regional_hourly/year_2003.rds", "regional_hourly/year_2004.rds", "regional_hourly/year_2005.rds", "regional_hourly/year_2006.rds", "regional_hourly/year_2007.rds", "regional_hourly/year_2008.rds", "regional_hourly/year_2009.rds", "regional_hourly/year_2010.rds", "regional_hourly/year_2011.rds", "regional_hourly/year_2012.rds", "regional_hourly/year_2013.rds", "regional_hourly/year_2014.rds", "regional_hourly/year_2015.rds", "regional_hourly/year_2016.rds", "regional_hourly/year_2017.rds", "regional_hourly/year_2018.rds", "regional_hourly/year_2019.rds", "regional_hourly/year_2020.rds", "regional_hourly/year_2021.rds", "regional_hourly/year_2022.rds", "regional_hourly/year_2023.rds", "regional_hourly/year_2024.rds", "regional_hourly/year_2025.rds", "regional_hourly/year_2026.rds"],
-    "measurement_daily_rows": 525353,
-    "measurements": ["humidity", "no2", "o3", "pm10", "pm25", "temperature"],
+    "measurement_daily_rows": 612930,
+    "measurements": ["co", "humidity", "no2", "o3", "pm10", "pm25", "so2", "temperature", "tvoc"],
     "grid_cells": 2083,
     "validation": [
       {
         "metric": "computed_daily_avg_ug_m3",
         "data_source": "Dallas AQMesh",
-        "observations": 114,
-        "mae": 3.5504,
-        "rmse": 4.5248,
-        "bias": 1.5883
+        "observations": 103,
+        "mae": 3.7458,
+        "rmse": 4.9436,
+        "bias": 1.5
       },
       {
         "metric": "computed_daily_avg_ug_m3",
         "data_source": "TCEQ",
-        "observations": 36,
-        "mae": 2.1223,
-        "rmse": 2.8025,
-        "bias": -1.9896
+        "observations": 27,
+        "mae": 2.2693,
+        "rmse": 2.9483,
+        "bias": -2.1668
       },
       {
         "metric": "computed_daily_max_ug_m3",
         "data_source": "Dallas AQMesh",
-        "observations": 113,
-        "mae": 7.4908,
-        "rmse": 9.5717,
-        "bias": 3.3399
+        "observations": 104,
+        "mae": 8.3431,
+        "rmse": 10.8767,
+        "bias": 3.367
       },
       {
         "metric": "computed_daily_max_ug_m3",
         "data_source": "TCEQ",
-        "observations": 36,
-        "mae": 7.932,
-        "rmse": 17.5713,
-        "bias": -6.7655
+        "observations": 27,
+        "mae": 9.4227,
+        "rmse": 20.1614,
+        "bias": -8.6154
       },
       {
         "metric": "hourly",
         "data_source": "Dallas AQMesh",
-        "observations": 80,
-        "mae": 4.0033,
-        "rmse": 6.5408,
-        "bias": 1.1079
+        "observations": 77,
+        "mae": 4.2196,
+        "rmse": 6.901,
+        "bias": 0.9049
       },
       {
         "metric": "hourly",
         "data_source": "TCEQ",
-        "observations": 33,
-        "mae": 3.5291,
-        "rmse": 4.5694,
-        "bias": -2.015
+        "observations": 26,
+        "mae": 3.5337,
+        "rmse": 4.5776,
+        "bias": -2.3115
       }
     ],
     "files": {
@@ -119,13 +125,13 @@
       "spatial_validation": "spatial_validation.rds"
     },
     "file_sha256": {
-      "regional_daily.rds": "4ad571fd7551ebd45a7d279f788ee97e08def0c1e9e8d1d8499f9416e4eff6fa",
-      "regional_reach.rds": "ab322fd8687846e58e8ba8e188b521574899644bc9c86215f329e0b9287220f4",
+      "regional_daily.rds": "b611b7aa5161b366c918553cbed86a59a01e9dc584b3b23c760e69837e461a12",
+      "regional_reach.rds": "e2adbe6e11000ec3f9d60817298528faa3c5678aa14b0515081ddff6061b1d3b",
       "regional_event_links.rds": "25c1970974395c5f1ab47404bc2b39a3948937b26b40b9bc858042de53cb91ad",
-      "regional_measurement_daily.rds": "a8b855e884d350e0c0e97a922f65bfb5b1aea61fdd796dbc1f55e353ff5c88bb",
-      "regional_hourly_index.rds": "5af5264bb8b5dd0e639ad1413c4ad6d0465515966c607fca4b7e8b089a941a4b",
-      "spatial_support.rds": "83e9072d725da85f562f94060ae1870850f150e510e30659186a6646af3c45d3",
-      "spatial_validation.rds": "b49a3f79c5ffad57689cbb231242ae825bd55f93892de7be30dc29defae1287d",
+      "regional_measurement_daily.rds": "54f47afc6acfce314c08253e45ca7ecc70786d908bfce6a0aaa643702a2cad3a",
+      "regional_hourly_index.rds": "8a7413fa084541a41748986003749fa4b32163cf1e7fb26e4df3ecef7d0249e4",
+      "spatial_support.rds": "797c29302f389905863f8fc352e37406dba581ce5d2198f4d02db1a21689d4c8",
+      "spatial_validation.rds": "9b73ac790c3b97de3feb8493dc9e8eb36148e82b8b2a1c2762b104197a97f515",
       "regional_hourly/year_2000.rds": "a87648f14a00c1d4d34a1a4571e658305f24357be00f1b83c6bbbb015d0ade1d",
       "regional_hourly/year_2001.rds": "e7771729bee19d7d8fb0ecfe9680861514af5f9ea2324fe6a1239d5d49130bf8",
       "regional_hourly/year_2002.rds": "eb20e95a9820c014008e231561ede35d7f9bad87a3a5db3b4b87725dca73d31a",
@@ -152,7 +158,7 @@
       "regional_hourly/year_2023.rds": "d2c2464fcb521b9c737889764522dc3671cb13469fefc5d6b257df71e4bcebb4",
       "regional_hourly/year_2024.rds": "fd1e472e7aeb84bfb728ac597533db12ff81536f2b304e5362da13b9b58faec4",
       "regional_hourly/year_2025.rds": "38bfc5755da7299979d021f71f7f58a140ac8186528eff3ff074c5e3a862495a",
-      "regional_hourly/year_2026.rds": "0e45335787abf80b8bcca3ea0da74289f5e919dce42053696da09c8706fbebfa"
+      "regional_hourly/year_2026.rds": "b75e7ff8344a26b2769855cdabfd1deb473368b11cbd33c6d021c1459a20f481"
     }
   },
   "algorithms": {
@@ -174,7 +180,7 @@
       "spatial_support": "spatial_support.rds",
       "spatial_validation": "spatial_validation.rds"
     },
-    "sites": ["sites/DAL_AQMESH_COLE_PARK.rds", "sites/DAL_AQMESH_FISH_TRAP_LAKE_PARK.rds", "sites/DAL_AQMESH_FLAGPOLE_HILL_PARK.rds", "sites/DAL_AQMESH_FRETZ_PARK.rds", "sites/DAL_AQMESH_FRIENDSHIP_PARK.rds", "sites/DAL_AQMESH_LARRY_JOHNSON_RECREATION_CENTER.rds", "sites/DAL_AQMESH_MARTIN_WEISS_PARK.rds", "sites/DAL_AQMESH_MARTIN_WEISS_PARK_II.rds", "sites/DAL_AQMESH_MONEYGRAM_PARK.rds", "sites/DAL_AQMESH_MOUNTAIN_CREEK_LIBRARY.rds", "sites/DAL_AQMESH_PARK_FOREST_LIBRARY.rds", "sites/DAL_AQMESH_SAMUEL_GARLAND_PARK.rds", "sites/DAL_AQMESH_WEST_DALLAS_MULTIPURPOSE_CENTER.rds", "sites/DAL_AQMESH_WESTHAVEN_PARK.rds", "sites/DAL_AQMESH_ARCADIA_PARK.rds", "sites/DAL_AQMESH_CAMBELL_GREEN_PARK.rds", "sites/DAL_AQMESH_CRAWFORD_MEMORIAL_PARK.rds", "sites/DAL_AQMESH_DALLAS_ZOO.rds", "sites/DAL_AQMESH_EMMA_CARTER_PARK.rds", "sites/DAL_AQMESH_FIFA_FAN_ZONE.rds", "sites/DAL_AQMESH_FLORAL_FARM_I.rds", "sites/DAL_AQMESH_FLORAL_FARM_II.rds", "sites/DAL_AQMESH_HOLCOMB_PARK.rds", "sites/DAL_AQMESH_JAYCEE_ZARAGOZA_PARK.rds", "sites/DAL_AQMESH_JOPPY_MOMMA_S_FARM.rds", "sites/DAL_AQMESH_LUNA_VISTA_GOLF_COURSE.rds", "sites/DAL_AQMESH_MILL_CREEK_BATCH_PLANT.rds", "sites/DAL_AQMESH_MYERS_PROSPERITY_PARK.rds", "sites/DAL_AQMESH_POLK_RECREATION_CENTER.rds", "sites/DAL_AQMESH_SOUTH_CENTRAL_PARK.rds", "sites/DAL_AQMESH_TOMMIE_ALLEN_RECREATION.rds", "sites/DAL_AQMESH_WILLIS_WINTERS_PARK.rds", "sites/48_439_3011.rds", "sites/48_113_0050.rds", "sites/48_349_1051.rds", "sites/48_113_1096.rds", "sites/48_121_0034.rds", "sites/48_439_1053.rds", "sites/48_439_1002.rds", "sites/48_439_3009.rds", "sites/48_439_1006.rds", "sites/48_139_1044.rds", "sites/48_257_0005.rds", "sites/48_113_0069.rds", "sites/48_439_3008.rds", "sites/48_139_0016.rds", "sites/48_139_0015.rds", "sites/48_139_0017.rds", "sites/48_113_3003.rds"]
+    "sites": ["sites/DAL_AQMESH_COLE_PARK.rds", "sites/DAL_AQMESH_FISH_TRAP_LAKE_PARK.rds", "sites/DAL_AQMESH_FLORAL_FARM_II.rds", "sites/DAL_AQMESH_FRETZ_PARK.rds", "sites/DAL_AQMESH_FRIENDSHIP_PARK.rds", "sites/DAL_AQMESH_LARRY_JOHNSON_RECREATION_CENTER.rds", "sites/DAL_AQMESH_MARTIN_WEISS_PARK_II.rds", "sites/DAL_AQMESH_MONEYGRAM_PARK.rds", "sites/DAL_AQMESH_MOUNTAIN_CREEK_LIBRARY.rds", "sites/DAL_AQMESH_PARK_FOREST_LIBRARY.rds", "sites/DAL_AQMESH_SAMUEL_GARLAND_PARK.rds", "sites/DAL_AQMESH_WEST_DALLAS_MULTIPURPOSE_CENTER.rds", "sites/DAL_AQMESH_WESTHAVEN_PARK.rds", "sites/DAL_AQMESH_ARCADIA_PARK.rds", "sites/DAL_AQMESH_CAMBELL_GREEN_PARK.rds", "sites/DAL_AQMESH_CRAWFORD_MEMORIAL_PARK.rds", "sites/DAL_AQMESH_DALLAS_ZOO.rds", "sites/DAL_AQMESH_EMMA_CARTER_PARK.rds", "sites/DAL_AQMESH_FIFA_FAN_ZONE.rds", "sites/DAL_AQMESH_FLAGPOLE_HILL_PARK.rds", "sites/DAL_AQMESH_FLORAL_FARM_I.rds", "sites/DAL_AQMESH_HOLCOMB_PARK.rds", "sites/DAL_AQMESH_JAYCEE_ZARAGOZA_PARK.rds", "sites/DAL_AQMESH_JOPPY_MOMMA_S_FARM.rds", "sites/DAL_AQMESH_LUNA_VISTA_GOLF_COURSE.rds", "sites/DAL_AQMESH_MARTIN_WEISS_PARK.rds", "sites/DAL_AQMESH_MILL_CREEK_BATCH_PLANT.rds", "sites/DAL_AQMESH_MYERS_PROSPERITY_PARK.rds", "sites/DAL_AQMESH_POLK_RECREATION_CENTER.rds", "sites/DAL_AQMESH_SOUTH_CENTRAL_PARK.rds", "sites/DAL_AQMESH_TOMMIE_ALLEN_RECREATION.rds", "sites/DAL_AQMESH_WILLIS_WINTERS_PARK.rds", "sites/48_439_3011.rds", "sites/48_113_0050.rds", "sites/48_349_1051.rds", "sites/48_113_1096.rds", "sites/48_121_0034.rds", "sites/48_439_1053.rds", "sites/48_439_1002.rds", "sites/48_439_3009.rds", "sites/48_439_1006.rds", "sites/48_139_1044.rds", "sites/48_257_0005.rds", "sites/48_113_0069.rds", "sites/48_439_3008.rds", "sites/48_139_0016.rds", "sites/48_139_0015.rds", "sites/48_139_0017.rds", "sites/48_113_3003.rds"]
   },
   "raw_data_dir": "Not included in the deployment bundle",
   "raw_manifest_path": "tceq_download_manifest.csv"

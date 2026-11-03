@@ -134,7 +134,7 @@ for (site_id in tceq_stations$aqs_site_id) {
         TRUE ~ "not_reported"
       )
     )
-  bundle$schema_version <- 6L
+  bundle$schema_version <- 7L
   output_path <- file.path(cache_dir, "sites", tceq_site_cache_filename(site_id))
   atomic_save_rds(bundle, output_path)
   row <- tceq_stations[tceq_stations$aqs_site_id == site_id, , drop = FALSE]
@@ -197,6 +197,9 @@ for (site_id in field_ids) {
       "pm10_raw", "pm10_ug_m3", "pm10_flag",
       "no2_raw", "no2_ppb", "no2_flag", "no2_units", "no2_state",
       "o3_raw", "o3_ppb", "o3_flag", "o3_units",
+      "so2_raw", "so2_ppb", "so2_flag", "so2_units",
+      "co_raw", "co_ppm_raw", "co_ppm", "co_source_flag", "co_flag", "co_units",
+      "tvoc_raw", "tvoc_ppb", "tvoc_flag", "tvoc_units",
       "temperature_f_raw", "temperature_c", "temperature_flag",
       "humidity_raw", "relative_humidity_percent", "humidity_flag",
       "reading_status_normalized", "particleprotocol_version",
@@ -206,7 +209,7 @@ for (site_id in field_ids) {
     ))) |>
     dplyr::mutate(data_source = "Dallas AQMesh")
   bundle <- list(
-    schema_version = 6L,
+    schema_version = 7L,
     metadata = metadata,
     hourly = tibble::as_tibble(hourly),
     daily = tibble::as_tibble(daily),
@@ -216,6 +219,7 @@ for (site_id in field_ids) {
       source = "City of Dallas AQMesh ArcGIS hourly layer",
       analytical_values = c(
         "pm2_5_scaled", "pm10_scaled", "no2_scaled_ppb", "o3_scaled_ppb",
+        "so2_scaled_ppb", "co_scaled_normalized_to_ppm", "tvoc_scaled_ppb",
         "temperature_f_converted_to_c", "humidity_percent"
       ),
       regulatory_status = paste(
@@ -235,6 +239,9 @@ for (site_id in field_ids) {
       valid_pm10_hours = sum(is.finite(hourly$composite_pm10_ug_m3)),
       valid_no2_hours = sum(is.finite(hourly$composite_no2_ppb)),
       valid_o3_hours = sum(is.finite(hourly$composite_o3_ppb)),
+      valid_so2_hours = sum(is.finite(hourly$composite_so2_ppb)),
+      valid_co_hours = sum(is.finite(hourly$composite_co_ppm)),
+      valid_tvoc_hours = sum(is.finite(hourly$composite_tvoc_ppb)),
       valid_temperature_hours = sum(is.finite(hourly$composite_temperature_c)),
       valid_humidity_hours = sum(
         is.finite(hourly$composite_relative_humidity_percent)
@@ -348,7 +355,7 @@ regional_files <- c(
 regional_hourly_files <- regional_hourly$index$years$file
 all_regional_files <- c(regional_files, regional_hourly_files)
 manifest <- list(
-  schema_version = 8L,
+  schema_version = 9L,
   generated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
   data_sources = c("TCEQ", "Dallas AQMesh"),
   source_counts = as.list(table(station_index$data_source)),
@@ -369,6 +376,9 @@ manifest <- list(
       pm10 = "81102 in µg/m³",
       no2 = "42602 in ppb",
       o3 = "44201 in ppb",
+      so2 = "42401 in ppb",
+      co = "42101 in ppm",
+      tvoc = "Not included: TCEQ total NMOC is not treated as equivalent to AQMesh TVOC",
       temperature = "62101 converted from degrees Fahrenheit to degrees Celsius",
       relative_humidity = "62201 in percent"
     )
@@ -382,6 +392,9 @@ manifest <- list(
       pm10 = "pm10_scaled in µg/m³",
       no2 = "no2_scaled ppb records",
       o3 = "o3_scaled ppb records",
+      so2 = "so2_scaled ppb records",
+      co = "co_scaled records normalized to ppm from source ppm or ppb units",
+      tvoc = "tvoc_scaled ppb records; AQMesh-only and non-regulatory",
       temperature = "temperature_f converted to degrees Celsius",
       relative_humidity = "humidity in percent"
     ),

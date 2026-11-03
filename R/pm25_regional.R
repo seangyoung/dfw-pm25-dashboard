@@ -327,6 +327,10 @@ pm25_regional_measurement_catalog <- function() {
     "pm10", "PM10", "µg/m³", "composite_pm10_ug_m3", 0, 100,
     "no2", "Nitrogen dioxide (NO₂)", "ppb", "composite_no2_ppb", 0, 100,
     "o3", "Ozone (O₃)", "ppb", "composite_o3_ppb", 0, 100,
+    "so2", "Sulfur dioxide (SO₂)", "ppb", "composite_so2_ppb", 0, 100,
+    "co", "Carbon monoxide (CO)", "ppm", "composite_co_ppm", 0, 5,
+    "tvoc", "Total volatile organic compounds (TVOC)", "ppb",
+    "composite_tvoc_ppb", 0, 100,
     "temperature", "Temperature", "°C", "composite_temperature_c", -10, 45,
     "humidity", "Relative humidity", "%",
     "composite_relative_humidity_percent", 0, 100

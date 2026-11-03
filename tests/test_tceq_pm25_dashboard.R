@@ -81,6 +81,9 @@ stopifnot(
 supplemental_clean_gas <- tceq_clean_supplemental_measurement(
   c("12", "-1", "QAS"), "42602"
 )
+supplemental_clean_co <- tceq_clean_supplemental_measurement(
+  c("0.8", "-0.1", "101"), "42101"
+)
 supplemental_clean_temperature <- tceq_clean_supplemental_measurement(
   c("32", "-4"), "62101"
 )
@@ -97,6 +100,9 @@ stopifnot(
   is.na(supplemental_clean_gas$normalized_value[2]),
   supplemental_clean_gas$flag[2] == "NEG",
   supplemental_clean_gas$flag[3] == "QAS",
+  supplemental_clean_co$normalized_value[1] == 0.8,
+  supplemental_clean_co$flag[2] == "NEG",
+  supplemental_clean_co$flag[3] == "OUT_OF_RANGE",
   supplemental_clean_temperature$normalized_value[1] == 0,
   abs(supplemental_clean_temperature$normalized_value[2] + 20) < 1e-8,
   supplemental_temperature_sd$normalized_value == 5,
@@ -488,7 +494,10 @@ stopifnot(
 measurement_catalog <- tceq_dashboard_measurement_catalog()
 stopifnot(identical(
   measurement_catalog$key,
-  c("pm25", "pm10", "no2", "o3", "temperature", "humidity")
+  c(
+    "pm25", "pm10", "no2", "o3", "so2", "co", "tvoc",
+    "temperature", "humidity"
+  )
 ))
 tceq_supplemental_display <- tceq_dashboard_measurement_hourly(
   list(
@@ -538,6 +547,15 @@ server_hourly_b$no2_contributing_records <- 1L
 server_hourly_b$composite_o3_ppb <- seq(10, 57)
 server_hourly_b$o3_flag_summary <- ""
 server_hourly_b$o3_contributing_records <- 1L
+server_hourly_b$composite_so2_ppb <- seq(2, 49)
+server_hourly_b$so2_flag_summary <- ""
+server_hourly_b$so2_contributing_records <- 1L
+server_hourly_b$composite_co_ppm <- seq(0.1, 1.04, length.out = 48)
+server_hourly_b$co_flag_summary <- ""
+server_hourly_b$co_contributing_records <- 1L
+server_hourly_b$composite_tvoc_ppb <- seq(1, 48)
+server_hourly_b$tvoc_flag_summary <- ""
+server_hourly_b$tvoc_contributing_records <- 1L
 server_hourly_b$composite_temperature_c <- rep(25, 48)
 server_hourly_b$temperature_flag_summary <- ""
 server_hourly_b$temperature_contributing_records <- 1L

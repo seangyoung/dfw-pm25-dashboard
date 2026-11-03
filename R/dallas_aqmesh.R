@@ -201,6 +201,8 @@ aqmesh_clean_latest_records <- function(records) {
     "project_time_interval_start", "project_time_interval_end", "append_date",
     "pm2_5_prescale", "pm2_5_scaled", "pm10_scaled",
     "no2_scaled", "no2_units", "no2_state", "o3_scaled", "o3_units",
+    "so2_scaled", "so2_units", "co_scaled", "co_units",
+    "tvoc_scaled", "tvoc_units",
     "humidity", "temperature_f", "reading_status", "particleprotocol_version",
     "pod_latitude", "pod_longitude"
   )
@@ -260,6 +262,37 @@ aqmesh_clean_latest_records <- function(records) {
         allowed_units = "ppb", state = .data$no2_state
       ),
       o3_ppb = aqmesh_valid_measurement(.data$o3_raw, .data$o3_flag),
+      so2_raw = suppressWarnings(as.numeric(.data$so2_scaled)),
+      so2_flag = aqmesh_measurement_flag(
+        .data$so2_raw, .data$reading_status_normalized,
+        minimum = 0, maximum = 10000, units = .data$so2_units,
+        allowed_units = "ppb"
+      ),
+      so2_ppb = aqmesh_valid_measurement(.data$so2_raw, .data$so2_flag),
+      co_raw = suppressWarnings(as.numeric(.data$co_scaled)),
+      co_ppm_raw = dplyr::case_when(
+        trimws(as.character(.data$co_units)) == "ppb" ~ .data$co_raw / 1000,
+        trimws(as.character(.data$co_units)) == "ppm" ~ .data$co_raw,
+        TRUE ~ .data$co_raw
+      ),
+      co_source_flag = aqmesh_measurement_flag(
+        .data$co_raw, .data$reading_status_normalized,
+        minimum = 0, maximum = Inf, units = .data$co_units,
+        allowed_units = c("ppm", "ppb")
+      ),
+      co_flag = dplyr::case_when(
+        !is.na(.data$co_source_flag) ~ .data$co_source_flag,
+        .data$co_ppm_raw > 100 ~ "OUT_OF_RANGE_HIGH",
+        TRUE ~ NA_character_
+      ),
+      co_ppm = aqmesh_valid_measurement(.data$co_ppm_raw, .data$co_flag),
+      tvoc_raw = suppressWarnings(as.numeric(.data$tvoc_scaled)),
+      tvoc_flag = aqmesh_measurement_flag(
+        .data$tvoc_raw, .data$reading_status_normalized,
+        minimum = 0, maximum = 100000, units = .data$tvoc_units,
+        allowed_units = "ppb"
+      ),
+      tvoc_ppb = aqmesh_valid_measurement(.data$tvoc_raw, .data$tvoc_flag),
       humidity_raw = suppressWarnings(as.numeric(.data$humidity)),
       humidity_flag = aqmesh_measurement_flag(
         .data$humidity_raw, .data$reading_status_normalized,
@@ -359,6 +392,15 @@ aqmesh_build_utc_composite <- function(clean_records, field_only = TRUE) {
       composite_o3_ppb = tceq_safe_median(.data$o3_ppb),
       o3_contributing_records = sum(is.finite(.data$o3_ppb)),
       o3_flag_summary = tceq_collapse_values(.data$o3_flag),
+      composite_so2_ppb = tceq_safe_median(.data$so2_ppb),
+      so2_contributing_records = sum(is.finite(.data$so2_ppb)),
+      so2_flag_summary = tceq_collapse_values(.data$so2_flag),
+      composite_co_ppm = tceq_safe_median(.data$co_ppm),
+      co_contributing_records = sum(is.finite(.data$co_ppm)),
+      co_flag_summary = tceq_collapse_values(.data$co_flag),
+      composite_tvoc_ppb = tceq_safe_median(.data$tvoc_ppb),
+      tvoc_contributing_records = sum(is.finite(.data$tvoc_ppb)),
+      tvoc_flag_summary = tceq_collapse_values(.data$tvoc_flag),
       composite_temperature_c = tceq_safe_median(.data$temperature_c),
       temperature_contributing_records = sum(is.finite(.data$temperature_c)),
       temperature_flag_summary = tceq_collapse_values(.data$temperature_flag),
@@ -417,6 +459,15 @@ aqmesh_build_display_composite <- function(hourly_utc) {
       composite_o3_ppb = tceq_safe_median(.data$composite_o3_ppb),
       o3_contributing_records = sum(.data$o3_contributing_records, na.rm = TRUE),
       o3_flag_summary = tceq_collapse_values(.data$o3_flag_summary),
+      composite_so2_ppb = tceq_safe_median(.data$composite_so2_ppb),
+      so2_contributing_records = sum(.data$so2_contributing_records, na.rm = TRUE),
+      so2_flag_summary = tceq_collapse_values(.data$so2_flag_summary),
+      composite_co_ppm = tceq_safe_median(.data$composite_co_ppm),
+      co_contributing_records = sum(.data$co_contributing_records, na.rm = TRUE),
+      co_flag_summary = tceq_collapse_values(.data$co_flag_summary),
+      composite_tvoc_ppb = tceq_safe_median(.data$composite_tvoc_ppb),
+      tvoc_contributing_records = sum(.data$tvoc_contributing_records, na.rm = TRUE),
+      tvoc_flag_summary = tceq_collapse_values(.data$tvoc_flag_summary),
       composite_temperature_c = tceq_safe_median(.data$composite_temperature_c),
       temperature_contributing_records = sum(
         .data$temperature_contributing_records, na.rm = TRUE
@@ -486,6 +537,11 @@ aqmesh_complete_display_hours <- function(hourly_display) {
       ),
       no2_contributing_records = dplyr::coalesce(.data$no2_contributing_records, 0L),
       o3_contributing_records = dplyr::coalesce(.data$o3_contributing_records, 0L),
+      so2_contributing_records = dplyr::coalesce(.data$so2_contributing_records, 0L),
+      co_contributing_records = dplyr::coalesce(.data$co_contributing_records, 0L),
+      tvoc_contributing_records = dplyr::coalesce(
+        .data$tvoc_contributing_records, 0L
+      ),
       temperature_contributing_records = dplyr::coalesce(
         .data$temperature_contributing_records, 0L
       ),
@@ -503,6 +559,9 @@ aqmesh_complete_display_hours <- function(hourly_display) {
       pm10_flag_summary = dplyr::coalesce(.data$pm10_flag_summary, ""),
       no2_flag_summary = dplyr::coalesce(.data$no2_flag_summary, ""),
       o3_flag_summary = dplyr::coalesce(.data$o3_flag_summary, ""),
+      so2_flag_summary = dplyr::coalesce(.data$so2_flag_summary, ""),
+      co_flag_summary = dplyr::coalesce(.data$co_flag_summary, ""),
+      tvoc_flag_summary = dplyr::coalesce(.data$tvoc_flag_summary, ""),
       temperature_flag_summary = dplyr::coalesce(
         .data$temperature_flag_summary, ""
       ),

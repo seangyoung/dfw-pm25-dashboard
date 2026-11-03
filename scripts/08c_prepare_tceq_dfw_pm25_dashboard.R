@@ -153,7 +153,7 @@ for (site_id in names(by_site)) {
     dplyr::filter(.data$aqs_site_id == site_id)
   hourly$site_name <- metadata$site_name[[1]]
   bundle <- list(
-    schema_version = 4L,
+    schema_version = 5L,
     metadata = metadata,
     hourly = tibble::as_tibble(hourly),
     daily = tibble::as_tibble(daily),
@@ -181,6 +181,12 @@ for (site_id in names(by_site)) {
     } else 0L,
     valid_o3_hours = if ("composite_o3_ppb" %in% names(hourly)) {
       sum(is.finite(hourly$composite_o3_ppb))
+    } else 0L,
+    valid_so2_hours = if ("composite_so2_ppb" %in% names(hourly)) {
+      sum(is.finite(hourly$composite_so2_ppb))
+    } else 0L,
+    valid_co_hours = if ("composite_co_ppm" %in% names(hourly)) {
+      sum(is.finite(hourly$composite_co_ppm))
     } else 0L,
     valid_temperature_hours = if ("composite_temperature_c" %in% names(hourly)) {
       sum(is.finite(hourly$composite_temperature_c))
@@ -223,7 +229,7 @@ atomic_write_csv(station_index, file.path(cache_dir, "station_index.csv"))
 atomic_write_csv(event_index, file.path(cache_dir, "event_index.csv"))
 
 manifest <- list(
-  schema_version = 4L,
+  schema_version = 5L,
   generated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
   raw_data_dir = normalizePath(raw_dir, winslash = "/"),
   raw_manifest_path = normalizePath(raw_manifest_path, winslash = "/"),
@@ -236,6 +242,8 @@ manifest <- list(
     pm10 = sum(station_index$valid_pm10_hours),
     no2 = sum(station_index$valid_no2_hours),
     o3 = sum(station_index$valid_o3_hours),
+    so2 = sum(station_index$valid_so2_hours),
+    co = sum(station_index$valid_co_hours),
     temperature = sum(station_index$valid_temperature_hours),
     humidity = sum(station_index$valid_humidity_hours)
   ),
@@ -253,6 +261,7 @@ manifest <- list(
     parameter_priority = c("88101", "88502"),
     supplemental_parameters = list(
       pm10 = "81102 (ug/m3)", no2 = "42602 (ppb)", o3 = "44201 (ppb)",
+      so2 = "42401 (ppb)", co = "42101 (ppm)",
       temperature = "62101 (degrees F converted to degrees C)",
       humidity = "62201 (percent)"
     ),
