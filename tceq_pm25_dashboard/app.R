@@ -224,9 +224,13 @@ ui <- bslib::page_sidebar(
       "}, true);\n",
       "(function() {\n",
       "  var overlays = {}, legends = {}, mapSyncs = {}, mapSyncRequests = {};\n",
-      "  var palette = ['#440154','#414487','#2A788E','#22A884','#7AD151','#FDE725'];\n",
+      "  var palettes = {\n",
+      "    concentration: ['#440154','#414487','#2A788E','#22A884','#7AD151','#FDE725'],\n",
+      "    disagreement: ['#FFF7EC','#FDD49E','#FC8D59','#D7301F','#7F0000']\n",
+      "  };\n",
       "  function hexToRgb(hex) { return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)]; }\n",
-      "  function color(value, lower, upper) {\n",
+      "  function color(value, lower, upper, paletteName) {\n",
+      "    var palette = palettes[paletteName] || palettes.concentration;\n",
       "    lower = Number.isFinite(lower) ? lower : 0;\n",
       "    var span = Math.max(1e-9, upper - lower);\n",
       "    var t = Math.max(0, Math.min(1, (value - lower) / span));\n",
@@ -241,7 +245,7 @@ ui <- bslib::page_sidebar(
       "      if (value === 3) return [217,119,6,215];\n",
       "      return [0,0,0,0];\n",
       "    }\n",
-      "    return color(value, message.lower, message.upper);\n",
+      "    return color(value, message.lower, message.upper, message.palette);\n",
       "  }\n",
       "  function legendRow(container, colorValue, label, markerClass) {\n",
       "    var row = L.DomUtil.create('div', 'pm25-legend-row', container);\n",
@@ -261,7 +265,9 @@ ui <- bslib::page_sidebar(
       "        legendRow(div, '#7C3AED', 'AQMesh only');\n",
       "        legendRow(div, '#D97706', 'Both networks');\n",
       "      } else {\n",
-      "        L.DomUtil.create('div', 'pm25-legend-gradient', div);\n",
+      "        var gradient = L.DomUtil.create('div', 'pm25-legend-gradient', div);\n",
+      "        var gradientPalette = palettes[message.palette] || palettes.concentration;\n",
+      "        gradient.style.background = 'linear-gradient(to right,' + gradientPalette.join(',') + ')';\n",
       "        var labels = L.DomUtil.create('div', 'pm25-legend-scale', div);\n",
       "        [message.legend.low, message.legend.mid, message.legend.high].forEach(function(label) {\n",
       "          var span = L.DomUtil.create('span', '', labels); span.textContent = label;\n",
@@ -382,7 +388,13 @@ ui <- bslib::page_sidebar(
       ),
       shiny::uiOutput("site_details"),
       shiny::uiOutput("measurement_control"),
+      shiny::uiOutput("temperature_unit_control"),
       leaflet::leafletOutput("site_map", height = 310),
+      shiny::conditionalPanel(
+        condition = paste(
+          "!(input.dashboard_tabs == 'site_overview' &&",
+          "input.site_tabs == 'trends')"
+        ),
       shiny::tags$label(
         class = "date-window-label", `for` = "date_window_days", "Date window"
       ),
@@ -414,7 +426,8 @@ ui <- bslib::page_sidebar(
         format = "yyyy-mm-dd", separator = " to "
       ),
       shiny::uiOutput("date_window_summary"),
-      shiny::helpText("The temporal heatmap is limited to 90 days."),
+      shiny::helpText("The temporal heatmap is limited to 90 days.")
+      ),
       shiny::uiOutput("cache_status"),
       shiny::div(
         class = "download-row",
@@ -549,6 +562,14 @@ ui <- bslib::page_sidebar(
         ),
         selected = "pm25"
       ),
+      shiny::conditionalPanel(
+        condition = "input.spatial_measurement == 'temperature'",
+        shiny::selectInput(
+          "spatial_temperature_unit", "Temperature units",
+          choices = c("Celsius (°C)" = "C", "Fahrenheit (°F)" = "F"),
+          selected = "C"
+        )
+      ),
       shiny::selectInput(
         "spatial_map_view", "Surface network",
         choices = c("Combined", "TCEQ", "Dallas AQMesh", "Disagreement"),
@@ -596,7 +617,11 @@ ui <- bslib::page_sidebar(
   bslib::navset_card_tab(
     id = "dashboard_tabs",
     bslib::nav_panel(
-      "Overview",
+      "Site Overview", value = "site_overview",
+      bslib::navset_card_tab(
+        id = "site_tabs",
+        bslib::nav_panel(
+      "Overview", value = "overview",
       bslib::layout_columns(
         col_widths = c(2, 2, 2, 2, 2, 2),
         metric_box("Valid coverage", "kpi_coverage"),
@@ -619,7 +644,7 @@ ui <- bslib::page_sidebar(
       )
     ),
     bslib::nav_panel(
-      "Hourly heatmap",
+      "Hourly heatmap", value = "heatmap",
       shiny::div(
         class = "heatmap-controls",
         shiny::checkboxInput(
@@ -634,7 +659,7 @@ ui <- bslib::page_sidebar(
       shiny::p(class = "method-note", shiny::textOutput("heatmap_caption", inline = TRUE))
     ),
     bslib::nav_panel(
-      "Patterns",
+      "Trends", value = "trends",
       bslib::layout_columns(
         col_widths = c(6, 6),
         bslib::card(
@@ -653,9 +678,11 @@ ui <- bslib::page_sidebar(
         bslib::card_header(shiny::textOutput("long_term_title", inline = TRUE)),
         plotly::plotlyOutput("long_term_plot", height = "500px")
       )
+        )
+      )
     ),
     bslib::nav_panel(
-      "Events", value = "events",
+      "PM2.5 Events", value = "events",
       bslib::navset_card_tab(
         id = "event_tabs",
         bslib::nav_panel(
@@ -739,7 +766,7 @@ ui <- bslib::page_sidebar(
             bslib::card(
               full_screen = TRUE,
               bslib::card_header("Direct and span-only overlaps"),
-              DT::DTOutput("regional_overlap_table")
+              shiny::uiOutput("regional_overlap_panel")
             )
           ),
           shiny::p(

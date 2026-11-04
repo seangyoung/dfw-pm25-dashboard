@@ -492,6 +492,17 @@ stopifnot(
   any(grepl("download_spatial_grid_request", app_server_source, fixed = TRUE)),
   any(grepl("regional_measurement_daily", app_server_source, fixed = TRUE)),
   any(grepl('"Spatial explorer"', app_ui_source, fixed = TRUE)),
+  any(grepl('"Site Overview"', app_ui_source, fixed = TRUE)),
+  any(grepl('"Trends", value = "trends"', app_ui_source, fixed = TRUE)),
+  any(grepl('"PM2.5 Events", value = "events"', app_ui_source, fixed = TRUE)),
+  any(grepl("input.site_tabs == 'trends'", app_ui_source, fixed = TRUE)),
+  any(grepl('"temperature_unit_control"', app_ui_source, fixed = TRUE)),
+  any(grepl('"spatial_temperature_unit"', app_ui_source, fixed = TRUE)),
+  any(grepl('"regional_overlap_panel"', app_ui_source, fixed = TRUE)),
+  any(grepl("palettes.disagreement", app_ui_source, fixed = TRUE)) ||
+    any(grepl("disagreement:", app_ui_source, fixed = TRUE)),
+  any(grepl("pm25_only = TRUE", app_server_source, fixed = TRUE)),
+  any(grepl("daily_minimum", app_server_source, fixed = TRUE)),
   !any(grepl('"regional_layer"', app_ui_source, fixed = TRUE)),
   !any(grepl('"spatial_layer"', app_ui_source, fixed = TRUE)),
   !any(grepl('"Map layer"', app_ui_source, fixed = TRUE)),
@@ -516,6 +527,14 @@ if (file.exists(public_build_script)) {
 # Server-level checks use compact in-memory site bundles; no external cache or
 # live TCEQ request is required by the project test suite.
 source(file.path(find_repo_root(), "R", "tceq_pm25_dashboard_app.R"))
+fahrenheit_info <- tceq_dashboard_measurement_info("temperature", "F")
+stopifnot(
+  fahrenheit_info$unit == "°F",
+  fahrenheit_info$fixed_min == 14,
+  fahrenheit_info$fixed_max == 113,
+  identical(tceq_dashboard_temperature_unit("invalid"), "C"),
+  identical(tceq_dashboard_convert_temperature(c(0, 25), "F"), c(32, 77))
+)
 stopifnot(
   identical(
     tceq_dashboard_regional_frame_labels(as.Date("2024-07-01"), "daily_avg"),
@@ -649,7 +668,7 @@ server_stations <- tibble::tibble(
   data_source = c("TCEQ", "Dallas AQMesh"),
   network_label = c("TCEQ", "City of Dallas AQMesh"),
   source_station_id = c("site_a", "Dallas location 1"),
-  time_label = c("LST", "local time")
+  time_label = c("LST", "local time"), valid_hours = c(48L, 48L)
 )
 server_events <- dplyr::bind_rows(
   server_bundles$site_a$events, server_bundles$site_b$events
@@ -681,6 +700,22 @@ shiny::testServer(
       nrow(measurement_daily()) == 2L,
       max(filtered_measurement_hourly()$display_value) == 67
     )
+    session$setInputs(measurement = "temperature", temperature_unit = "F")
+    session$flushReact()
+    stopifnot(
+      selected_measurement() == "temperature",
+      measurement_info()$unit == "°F",
+      all(measurement_hourly()$display_value == 77),
+      all(measurement_daily()$daily_minimum == 77)
+    )
+    session$setInputs(dashboard_tabs = "events")
+    session$flushReact()
+    stopifnot(
+      selected_measurement() == "pm25",
+      nrow(available_stations()) == 2L
+    )
+    session$setInputs(dashboard_tabs = "site_overview", site_tabs = "overview")
+    session$flushReact()
     session$setInputs(site_map_marker_click = list(id = "site_a"))
     session$flushReact()
     stopifnot(
@@ -713,7 +748,38 @@ regional_anchor_event <- server_bundles$site_a$events[1, , drop = FALSE] |>
     span_days = 2L, duration_hours = 48,
     core_dates = "2024-01-01|2024-01-02", trough_dates = ""
   )
-regional_server_events <- dplyr::bind_rows(server_events, regional_anchor_event)
+regional_single_site_event <- regional_anchor_event |>
+  dplyr::mutate(
+    aqs_site_id = "site_b", event_id = "MULTI_site_b_20240201",
+    start_date = as.Date("2024-02-01"), end_date = as.Date("2024-02-02"),
+    core_dates = "2024-02-01|2024-02-02"
+  )
+regional_server_events <- dplyr::bind_rows(
+  server_events, regional_anchor_event, regional_single_site_event
+)
+regional_server_stations <- dplyr::bind_rows(
+  server_stations,
+  tibble::tibble(
+    aqs_site_id = "site_c", site_name = "C missing site", active = TRUE,
+    last_date = as.Date("2024-01-02"), first_date = as.Date("2024-01-01"),
+    cams_id = 3L, city = "Test", county = "Test", latitude = 32.9,
+    longitude = -97.1, data_source = "TCEQ", network_label = "TCEQ",
+    source_station_id = "site_c", time_label = "LST", valid_hours = 0L
+  )
+)
+stopifnot(
+  identical(
+    tceq_dashboard_pm25_sites(regional_server_stations)$aqs_site_id,
+    c("site_a", "site_b")
+  ),
+  identical(
+    tceq_dashboard_regional_marker_radius(
+      c("TCEQ", "TCEQ", "Dallas AQMesh", "Dallas AQMesh"),
+      c(10, NA, 10, NA)
+    ),
+    c(7, 4.55, 4, 2.6)
+  )
+)
 regional_server_daily <- dplyr::bind_rows(
   tibble::tibble(
     aqs_site_id = "site_a", date = as.Date(c("2024-01-01", "2024-01-02")),
@@ -736,6 +802,15 @@ regional_server_daily <- dplyr::bind_rows(
     parameter_fallback_hours = 0L, event_eligible = TRUE,
     threshold_core = FALSE, event_active = FALSE, event_core = FALSE,
     event_trough = FALSE
+  ),
+  tibble::tibble(
+    aqs_site_id = "site_c", date = as.Date("2024-01-01"),
+    data_source = "TCEQ", valid_hours = 5L,
+    computed_daily_max_ug_m3 = 12, computed_daily_avg_ug_m3 = 8,
+    computed_daily_median_ug_m3 = 7, computed_daily_iqr_ug_m3 = 3,
+    qa_fallback_hours = 0L, parameter_fallback_hours = 0L,
+    event_eligible = FALSE, threshold_core = FALSE, event_active = FALSE,
+    event_core = FALSE, event_trough = FALSE
   )
 )
 regional_server_reach <- pm25_daily_reach(regional_server_daily)
@@ -779,7 +854,7 @@ regional_loader <- function(name) switch(
 )
 shiny::testServer(
   tceq_dashboard_server(
-    server_stations, regional_server_events,
+    regional_server_stations, regional_server_events,
     load_bundle = function(site_id) server_bundles[[site_id]],
     load_regional = regional_loader, regional_available = TRUE
   ),
@@ -797,14 +872,24 @@ shiny::testServer(
     session$flushReact()
     stopifnot(
       regional_anchor()$event_id == "MULTI_site_a_20240101",
-      nrow(regional_window_daily()) == 4L,
+      nrow(regional_window_daily()) == 5L,
       nrow(regional_window_reach()) == 2L,
       nrow(regional_anchor_links()) == 1L,
       regional_anchor_links()$relationship == "shared_core",
       nrow(regional_filtered_events()) == 1L,
       regional_filtered_events()$aligned_sites == 2L,
-      regional_frame_index() == 1L
+      regional_frame_index() == 1L,
+      !any(grepl(
+        "C missing site", as.character(regional_alignment_data()$site_label),
+        fixed = TRUE
+      ))
     )
+    session$setInputs(
+      regional_event_min_sites = "1",
+      regional_anchor = "site_b::MULTI_site_b_20240201"
+    )
+    session$flushReact()
+    stopifnot(nrow(regional_anchor_links()) == 0L)
     session$setInputs(
       event_tabs = "maps",
       regional_map_event = "site_a::MULTI_site_a_20240101",
@@ -821,9 +906,15 @@ shiny::testServer(
       identical(rv$regional_animation$key, regional_surface_key()),
       length(rv$regional_animation$frames) == 2L,
       fixed_scale_payload$upper == 30,
+      identical(fixed_scale_payload$palette, "concentration"),
       identical(fixed_scale_payload$legend$high, "30+"),
       identical(fixed_scale_payload$legend$frame, "Date: 2024-01-01")
     )
+    disagreement_payload <- regional_surface_payload(
+      regional_surface(), "Disagreement", "regional_surface_map",
+      "Date: 2024-01-01"
+    )
+    stopifnot(identical(disagreement_payload$palette, "disagreement"))
     download <- session$.__enclos_env__$private$file_generators$get(
       session$ns("download_regional_grid")
     )
@@ -847,6 +938,7 @@ shiny::testServer(
       spatial_metric = "daily_avg", spatial_map_view = "Combined",
       spatial_adaptive = FALSE,
       spatial_compare = FALSE, spatial_speed = "1000",
+      spatial_temperature_unit = "C",
       spatial_dates = as.Date(c("2024-01-01", "2024-01-01"))
     )
     session$flushReact()
@@ -859,5 +951,23 @@ shiny::testServer(
       spatial_payload$upper == 45,
       identical(spatial_payload$legend$title, "Temperature (°C)")
     )
+    session$setInputs(spatial_temperature_unit = "F")
+    session$flushReact()
+    spatial_payload_f <- spatial_surface_payload(
+      spatial_surface(), "Combined", "spatial_surface_map", "Date: 2024-01-01"
+    )
+    stopifnot(
+      spatial_payload_f$lower == 14,
+      spatial_payload_f$upper == 113,
+      identical(spatial_payload_f$legend$title, "Temperature (°F)"),
+      identical(spatial_payload_f$palette, "concentration")
+    )
+    spatial_disagreement_payload <- spatial_surface_payload(
+      spatial_surface(), "Disagreement", "spatial_surface_map",
+      "Date: 2024-01-01"
+    )
+    stopifnot(identical(
+      spatial_disagreement_payload$palette, "disagreement"
+    ))
   }
 )

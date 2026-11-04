@@ -33,10 +33,36 @@ tceq_dashboard_measurement_catalog <- function() {
   )
 }
 
-tceq_dashboard_measurement_info <- function(key) {
+tceq_dashboard_temperature_unit <- function(unit = "C") {
+  unit <- toupper(as.character(unit)[1])
+  if (!unit %in% c("C", "F")) "C" else unit
+}
+
+tceq_dashboard_convert_temperature <- function(value, unit = "C") {
+  if (identical(tceq_dashboard_temperature_unit(unit), "F")) {
+    value * 9 / 5 + 32
+  } else value
+}
+
+tceq_dashboard_measurement_info <- function(key, temperature_unit = "C") {
   catalog <- tceq_dashboard_measurement_catalog()
   selected <- catalog[catalog$key == key, , drop = FALSE]
   if (!nrow(selected)) stop("Unknown dashboard measurement: ", key)
+  if (identical(key, "temperature") &&
+      identical(tceq_dashboard_temperature_unit(temperature_unit), "F")) {
+    selected$unit <- "°F"
+    selected$fixed_min <- tceq_dashboard_convert_temperature(
+      selected$fixed_min, "F"
+    )
+    selected$fixed_max <- tceq_dashboard_convert_temperature(
+      selected$fixed_max, "F"
+    )
+    if (is.finite(selected$adaptive_floor)) {
+      selected$adaptive_floor <- tceq_dashboard_convert_temperature(
+        selected$adaptive_floor, "F"
+      )
+    }
+  }
   selected[1, , drop = FALSE]
 }
 
@@ -48,8 +74,9 @@ tceq_dashboard_supported_measurements <- function(bundle) {
   catalog[supported, , drop = FALSE]
 }
 
-tceq_dashboard_measurement_hourly <- function(bundle, key) {
-  info <- tceq_dashboard_measurement_info(key)
+tceq_dashboard_measurement_hourly <- function(
+    bundle, key, temperature_unit = "C") {
+  info <- tceq_dashboard_measurement_info(key, temperature_unit)
   hourly <- bundle$hourly
   value_column <- info$value_column[[1]]
   if (!value_column %in% names(hourly)) {
@@ -58,6 +85,11 @@ tceq_dashboard_measurement_hourly <- function(bundle, key) {
   flag_column <- info$flag_column[[1]]
   count_column <- info$count_column[[1]]
   hourly$display_value <- as.numeric(hourly[[value_column]])
+  if (identical(key, "temperature")) {
+    hourly$display_value <- tceq_dashboard_convert_temperature(
+      hourly$display_value, temperature_unit
+    )
+  }
   hourly$display_flag <- if (flag_column %in% names(hourly)) {
     dplyr::coalesce(as.character(hourly[[flag_column]]), "")
   } else ""
@@ -107,11 +139,27 @@ tceq_dashboard_measurement_daily <- function(hourly) {
     dplyr::summarise(
       valid_hours = sum(is.finite(.data$display_value)),
       daily_average = tceq_safe_mean(.data$display_value),
+      daily_minimum = if (any(is.finite(.data$display_value))) {
+        min(.data$display_value[is.finite(.data$display_value)])
+      } else NA_real_,
       daily_maximum = tceq_safe_max(.data$display_value),
       daily_median = tceq_safe_median(.data$display_value),
       daily_iqr = tceq_safe_iqr(.data$display_value),
       .groups = "drop"
     )
+}
+
+tceq_dashboard_pm25_sites <- function(station_index) {
+  if (!"valid_hours" %in% names(station_index)) return(station_index)
+  station_index[
+    is.finite(station_index$valid_hours) & station_index$valid_hours > 0L,
+    , drop = FALSE
+  ]
+}
+
+tceq_dashboard_regional_marker_radius <- function(data_source, value) {
+  base <- ifelse(data_source == "TCEQ", 7, 4)
+  ifelse(is.finite(value), base, pmax(2.5, base * 0.65))
 }
 
 tceq_complete_measurement_heatmap <- function(
@@ -403,11 +451,15 @@ tceq_dashboard_server <- function(
 
     available_stations <- shiny::reactive({
       requested <- input$data_source
-      if (is.null(requested) || identical(requested, "Combined")) {
+      stations <- if (is.null(requested) || identical(requested, "Combined")) {
         station_index
       } else {
         station_index[station_index$data_source == requested, , drop = FALSE]
       }
+      if (identical(input$dashboard_tabs, "events")) {
+        stations <- tceq_dashboard_pm25_sites(stations)
+      }
+      stations
     })
     selected_site <- shiny::reactive(rv$site)
     site_record <- shiny::reactive({
@@ -417,16 +469,27 @@ tceq_dashboard_server <- function(
     supported_measurements <- shiny::reactive(
       tceq_dashboard_supported_measurements(site_bundle())
     )
+    site_temperature_unit <- shiny::reactive(
+      tceq_dashboard_temperature_unit(input$temperature_unit)
+    )
     selected_measurement <- shiny::reactive({
       supported <- supported_measurements()
+      if (identical(input$dashboard_tabs, "events") &&
+          "pm25" %in% supported$key) return("pm25")
       requested <- input$measurement
-      if (is.null(requested) || !requested %in% supported$key) "pm25" else requested
+      if (is.null(requested) || !requested %in% supported$key) {
+        if ("pm25" %in% supported$key) "pm25" else supported$key[[1]]
+      } else requested
     })
     measurement_info <- shiny::reactive(
-      tceq_dashboard_measurement_info(selected_measurement())
+      tceq_dashboard_measurement_info(
+        selected_measurement(), site_temperature_unit()
+      )
     )
     measurement_hourly <- shiny::reactive(
-      tceq_dashboard_measurement_hourly(site_bundle(), selected_measurement())
+      tceq_dashboard_measurement_hourly(
+        site_bundle(), selected_measurement(), site_temperature_unit()
+      )
     )
     date_bounds <- shiny::reactive(tceq_dashboard_date_bounds(
       site_bundle(), selected_measurement()
@@ -458,7 +521,7 @@ tceq_dashboard_server <- function(
       invisible(dates)
     }
 
-    shiny::observeEvent(input$data_source, {
+    shiny::observeEvent(list(input$data_source, input$dashboard_tabs), {
       stations <- available_stations()
       shiny::req(nrow(stations) > 0L)
       selected <- rv$site
@@ -471,7 +534,12 @@ tceq_dashboard_server <- function(
         session, "site", choices = tceq_dashboard_site_choices(stations),
         selected = selected
       )
-    }, ignoreInit = FALSE)
+    }, ignoreInit = FALSE, priority = 100)
+
+    shiny::observeEvent(input$dashboard_tabs, {
+      if (!identical(input$dashboard_tabs, "events")) return()
+      shiny::updateSelectInput(session, "measurement", selected = "pm25")
+    }, ignoreInit = TRUE, priority = 90)
 
     shiny::observeEvent(input$site, {
       if (!is.null(input$site) && input$site %in% available_stations()$aqs_site_id) {
@@ -743,6 +811,18 @@ tceq_dashboard_server <- function(
     })
 
     output$measurement_control <- shiny::renderUI({
+      if (identical(input$dashboard_tabs, "events")) {
+        return(shiny::tagList(
+          shiny::div(
+            class = "fixed-measurement-label",
+            shiny::strong("Displayed measurement"),
+            shiny::div("PM2.5")
+          ),
+          shiny::helpText(
+            "This section uses PM2.5 exclusively for event identification and comparison."
+          )
+        ))
+      }
       supported <- supported_measurements()
       choices <- stats::setNames(supported$key, supported$label)
       shiny::tagList(
@@ -772,6 +852,16 @@ tceq_dashboard_server <- function(
             )
           )
         }
+      )
+    })
+
+    output$temperature_unit_control <- shiny::renderUI({
+      if (!identical(selected_measurement(), "temperature") ||
+          identical(input$dashboard_tabs, "events")) return(NULL)
+      shiny::selectInput(
+        "temperature_unit", "Temperature units",
+        choices = c("Celsius (°C)" = "C", "Fahrenheit (°F)" = "F"),
+        selected = site_temperature_unit()
       )
     })
 
@@ -833,6 +923,16 @@ tceq_dashboard_server <- function(
           date, daily_average, info$unit, valid_hours
         ), hoverinfo = "text"
       )
+      if (identical(selected_measurement(), "temperature")) {
+        p <- plotly::add_lines(
+          p, data = d, x = ~date, y = ~daily_minimum,
+          name = "Daily minimum", line = list(color = "#2563EB", width = 1.5),
+          text = ~sprintf(
+            "%s<br>Minimum: %.1f %s<br>Valid hours: %d",
+            date, daily_minimum, info$unit, valid_hours
+          ), hoverinfo = "text"
+        )
+      }
       p <- plotly::add_lines(
         p, data = d, x = ~date, y = ~daily_maximum,
         name = "Daily maximum", line = list(color = "#D97706", width = 1.5),
@@ -865,7 +965,9 @@ tceq_dashboard_server <- function(
       } else {
         paste(
           measurement_info()$label,
-          "daily average and maximum are summaries of valid hourly values.",
+          if (identical(selected_measurement(), "temperature")) {
+            "daily minimum, average, and maximum are summaries of valid hourly values."
+          } else "daily average and maximum are summaries of valid hourly values.",
           "The PM2.5 event counts above do not change with this selection."
         )
       }
@@ -1261,6 +1363,16 @@ tceq_dashboard_server <- function(
           "%{x|%Y-%m-%d}<br>Average %{y:.1f} ", info$unit, "<extra></extra>"
         )
       )
+      if (identical(selected_measurement(), "temperature")) {
+        p <- plotly::add_lines(
+          p, data = d, x = ~date, y = ~daily_minimum,
+          name = "Daily minimum", line = list(color = "#2563EB", width = 0.8),
+          hovertemplate = paste0(
+            "%{x|%Y-%m-%d}<br>Minimum %{y:.1f} ", info$unit,
+            "<extra></extra>"
+          )
+        )
+      }
       p <- plotly::add_lines(
         p, data = d, x = ~date, y = ~daily_maximum,
         name = "Daily maximum", line = list(color = "#D97706", width = 0.8),
@@ -1668,6 +1780,16 @@ tceq_dashboard_server <- function(
           )
         )
       site_levels <- station_index |>
+        dplyr::semi_join(
+          grid |>
+            dplyr::group_by(.data$aqs_site_id) |>
+            dplyr::summarise(
+              has_usable_day = any(!.data$status %in% c("Missing", "Incomplete")),
+              .groups = "drop"
+            ) |>
+            dplyr::filter(.data$has_usable_day),
+          by = "aqs_site_id"
+        ) |>
         dplyr::arrange(.data$data_source, .data$site_name) |>
         dplyr::transmute(label = paste0(
           ifelse(.data$data_source == "TCEQ", "TCEQ · ", "AQMesh · "),
@@ -1675,6 +1797,7 @@ tceq_dashboard_server <- function(
         )) |>
         dplyr::pull(.data$label)
       grid |>
+        dplyr::filter(.data$site_label %in% site_levels) |>
         dplyr::mutate(
           status = factor(
             .data$status,
@@ -1801,6 +1924,7 @@ tceq_dashboard_server <- function(
 
     output$regional_overlap_table <- DT::renderDT({
       display <- regional_overlap_display()
+      shiny::req(nrow(display) > 0L)
       DT::datatable(
         display, rownames = FALSE, filter = "top", selection = "single",
         options = list(pageLength = 8, scrollX = TRUE)
@@ -1811,6 +1935,23 @@ tceq_dashboard_server <- function(
             "Lowest core median", "Lowest core IQR"
           ), 1
         )
+    })
+
+    output$regional_overlap_panel <- shiny::renderUI({
+      links <- regional_anchor_links()
+      if (is.null(links) || !nrow(links)) {
+        return(shiny::div(
+          class = "method-note regional-empty-overlap",
+          shiny::strong("No cross-site overlaps for this event."),
+          shiny::div(
+            paste(
+              "The selected MDPE involves only its anchor site, so direct and",
+              "span-only overlap details are not available."
+            )
+          )
+        ))
+      }
+      DT::DTOutput("regional_overlap_table")
     })
 
     regional_peak <- shiny::reactive({
@@ -2017,9 +2158,12 @@ tceq_dashboard_server <- function(
       )
     })
 
-    regional_map_base <- function(network = NULL) {
+    regional_map_base <- function(network = NULL, pm25_only = FALSE) {
       spatial <- regional_spatial()
       locations <- station_index
+      if (isTRUE(pm25_only)) {
+        locations <- tceq_dashboard_pm25_sites(locations)
+      }
       if (!is.null(network)) {
         locations <- locations[locations$data_source == network, , drop = FALSE]
       }
@@ -2060,13 +2204,13 @@ tceq_dashboard_server <- function(
     }
 
     output$regional_surface_map <- leaflet::renderLeaflet({
-      regional_map_base()
+      regional_map_base(pm25_only = TRUE)
     })
     output$regional_tceq_map <- leaflet::renderLeaflet({
-      regional_map_base("TCEQ")
+      regional_map_base("TCEQ", pm25_only = TRUE)
     })
     output$regional_aqmesh_map <- leaflet::renderLeaflet({
-      regional_map_base("Dallas AQMesh")
+      regional_map_base("Dallas AQMesh", pm25_only = TRUE)
     })
 
     regional_surface_payload <- function(surface, view, id, frame_labels) {
@@ -2146,12 +2290,15 @@ tceq_dashboard_server <- function(
       list(
         id = id, rows = rows, cols = columns, values = canvas,
         upper = unname(upper), categorical = categorical,
+        palette = if (identical(view, "Disagreement")) {
+          "disagreement"
+        } else "concentration",
         bounds = as.list(spatial$bounds), fit = FALSE, legend = legend
       )
     }
 
     update_regional_markers <- function(map_id, values, network = NULL) {
-      locations <- station_index
+      locations <- tceq_dashboard_pm25_sites(station_index)
       if (!is.null(network)) {
         locations <- locations[locations$data_source == network, , drop = FALSE]
       }
@@ -2169,13 +2316,16 @@ tceq_dashboard_server <- function(
         leaflet::clearGroup("measurements") |>
         leaflet::addCircleMarkers(
           lng = ~longitude, lat = ~latitude,
-          radius = ifelse(locations$data_source == "TCEQ", 7, 4),
+          radius = tceq_dashboard_regional_marker_radius(
+            locations$data_source, locations$value
+          ),
           color = ifelse(locations$data_source == "TCEQ", "#0F766E", "#7C3AED"),
           fillColor = ifelse(
             locations$data_source == "TCEQ", "#0F766E", "#7C3AED"
           ),
-          fillOpacity = ifelse(is.finite(locations$value), 0.95, 0.28),
-          weight = 2, group = "measurements", label = lapply(label, htmltools::HTML)
+          fillOpacity = ifelse(is.finite(locations$value), 0.95, 0.24),
+          weight = ifelse(is.finite(locations$value), 2, 1),
+          group = "measurements", label = lapply(label, htmltools::HTML)
         )
     }
 
@@ -2337,7 +2487,10 @@ tceq_dashboard_server <- function(
     spatial_measurement_info <- shiny::reactive({
       key <- input$spatial_measurement
       if (is.null(key) || !nzchar(key)) key <- "pm25"
-      tceq_dashboard_measurement_info(key)
+      unit <- if (identical(key, "temperature")) {
+        tceq_dashboard_temperature_unit(input$spatial_temperature_unit)
+      } else "C"
+      tceq_dashboard_measurement_info(key, unit)
     })
 
     spatial_measurement_rows <- shiny::reactive({
@@ -2423,6 +2576,11 @@ tceq_dashboard_server <- function(
       data <- spatial_measurement_rows()
       data <- data[data$date == as.Date(frame), , drop = FALSE]
       values <- data[[field]]
+      if (identical(spatial_measurement_info()$key[[1]], "temperature")) {
+        values <- tceq_dashboard_convert_temperature(
+          values, input$spatial_temperature_unit
+        )
+      }
       values[!data$eligible] <- NA_real_
       stats::setNames(values, data$aqs_site_id)
     }
@@ -2430,7 +2588,9 @@ tceq_dashboard_server <- function(
     spatial_surface_key <- shiny::reactive({
       paste(
         input$spatial_measurement, input$spatial_metric,
-        input$spatial_map_view, paste(spatial_dates(), collapse = ":"),
+        input$spatial_map_view,
+        tceq_dashboard_temperature_unit(input$spatial_temperature_unit),
+        paste(spatial_dates(), collapse = ":"),
         sep = "|"
       )
     })
@@ -2605,6 +2765,9 @@ tceq_dashboard_server <- function(
       list(
         id = id, rows = rows, cols = columns, values = canvas,
         lower = unname(lower), upper = unname(upper), categorical = categorical,
+        palette = if (identical(view, "Disagreement")) {
+          "disagreement"
+        } else "concentration",
         bounds = as.list(spatial$bounds), fit = FALSE, legend = legend
       )
     }

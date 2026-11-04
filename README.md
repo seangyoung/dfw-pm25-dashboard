@@ -4,21 +4,25 @@ An interactive dashboard for exploring hourly fine-particulate-matter (PM2.5)
 measurements from Texas Commission on Environmental Quality regulatory monitors
 and City of Dallas AQMesh community sensors in the Dallas-Fort Worth region.
 
-The dashboard includes synchronized map and dropdown station selection, hourly
-date-by-hour heatmaps, navigable 7–90 day windows, long-term patterns,
-data-quality diagnostics, and exploratory event screening. It runs entirely in
+The **Site Overview** section groups Overview, Hourly heatmap, and Trends views
+around synchronized map and dropdown station selection. It includes navigable
+7–90 day windows, long-term patterns, data-quality diagnostics, and exploratory
+event screening. It runs entirely in
 the browser through Shinylive; no server-side R session receives user activity
 or data. A synchronized selector switches between **Combined**, **TCEQ**, and
 **Dallas AQMesh** networks.
 
 At both TCEQ and Dallas AQMesh sites, a measurement selector switches the Overview, hourly
-heatmap, temporal-pattern plots, and visible-data download among PM2.5, PM10,
+heatmap, Trends plots, and visible-data download among PM2.5, PM10,
 NO2, O3, SO2, CO, TVOC, temperature, and relative humidity when those measurements are
-available at the selected location. Temperature and humidity are presented as
+available at the selected location. Temperature displays can switch between
+Celsius and Fahrenheit, and the daily temperature graphs include minimum,
+average, and maximum values. Temperature and humidity are presented as
 environmental context rather than pollutants. PM2.5 event and regional
 analyses remain PM2.5-specific regardless of this site-level choice.
 
-The **Events** section contains Single Site, Regional, and Maps views. Regional
+The **PM2.5 Events** section contains Single Site, Regional, and Maps views and
+automatically uses PM2.5. Regional
 compares existing multi-day events directly across sensors and provides
 network-balanced reach summaries. Maps starts from a selected MDPE, adds two
 context days on each side, and leaves the resulting date window editable. Its
