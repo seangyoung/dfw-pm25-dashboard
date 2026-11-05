@@ -1,6 +1,6 @@
 {
   "schema_version": 10,
-  "generated_at_utc": "2026-11-04 21:17:07 UTC",
+  "generated_at_utc": "2026-11-05 07:11:18 UTC",
   "data_sources": ["TCEQ", "Dallas AQMesh"],
   "source_counts": {
     "Dallas AQMesh": 32,
@@ -8,15 +8,15 @@
   },
   "station_count": 94,
   "hourly_composite_rows": 9062064,
-  "valid_hourly_values": 2138499,
+  "valid_hourly_values": 2138599,
   "event_count": 3572,
   "first_date": "1997-03-01",
   "last_date": "2026-11-04",
   "preparation_command": "Rscript --vanilla scripts/08i_update_dfw_pm25_dashboard.R",
   "tceq": {
     "source_cache": "Not included in the deployment bundle",
-    "cache_manifest_sha256": "ab0901f5861e176cf7757a69924097dbeb44a33f3490993646c13db93fe825e8",
-    "raw_manifest_sha256": "362909f14d107486777d26407ae6bdd9a5d7cb4b17899f59d04010f10fde4a50",
+    "cache_manifest_sha256": "5bdcab55a97d6c60123e7287fa2bd0004695df715a52b79b136e2a0f3118240d",
+    "raw_manifest_sha256": "e917f6f89cd4579eaa252b44843a9af796e81bdb184b1345c6d3cc70823a24e7",
     "parameter_priority": ["88101", "88502"],
     "analytical_values": {
       "pm25": "88101 with 88502 fallback in µg/m³",
@@ -32,8 +32,8 @@
   },
   "dallas_aqmesh": {
     "source_import": "Not included in the deployment bundle",
-    "import_metadata_sha256": "6571c27758bff01c71ddfec4586fff97775d3745e973a85197115d3486fe3dbb",
-    "raw_download_manifest_sha256": "743b0ffb4da8530340703721f19999f25850a9359f5c0f24d71df0c9add7245d",
+    "import_metadata_sha256": "ac5862a9132c7ed7038fa4c5ec221139927b7e9418ad652f306cfda82f70364a",
+    "raw_download_manifest_sha256": "449f078bae349a07a137cb13d5cc7884d5a5eb755dd44816e6d7191f56baeab7",
     "analytical_values": {
       "pm25": "pm2_5_scaled in µg/m³",
       "pm10": "pm10_scaled in µg/m³",
@@ -51,7 +51,7 @@
   "regional_analysis": {
     "boundary": "NCTCOG 16-county region",
     "boundary_source_url": "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_county_500k.zip",
-    "boundary_retrieved_at_utc": "2026-11-04 21:16:42 UTC",
+    "boundary_retrieved_at_utc": "2026-11-05 07:10:56 UTC",
     "analysis_crs": 3083,
     "grid_resolution_m": 4000,
     "idw_power": 2,
@@ -60,7 +60,7 @@
     "support_nearest_m": 25000,
     "support_minimum_nearby_sites": 3,
     "balanced_participation_minimum_network_sites": 3,
-    "hourly_rows": 235310,
+    "hourly_rows": 235320,
     "hourly_files": ["regional_hourly/year_2000.rds", "regional_hourly/year_2001.rds", "regional_hourly/year_2002.rds", "regional_hourly/year_2003.rds", "regional_hourly/year_2004.rds", "regional_hourly/year_2005.rds", "regional_hourly/year_2006.rds", "regional_hourly/year_2007.rds", "regional_hourly/year_2008.rds", "regional_hourly/year_2009.rds", "regional_hourly/year_2010.rds", "regional_hourly/year_2011.rds", "regional_hourly/year_2012.rds", "regional_hourly/year_2013.rds", "regional_hourly/year_2014.rds", "regional_hourly/year_2015.rds", "regional_hourly/year_2016.rds", "regional_hourly/year_2017.rds", "regional_hourly/year_2018.rds", "regional_hourly/year_2019.rds", "regional_hourly/year_2020.rds", "regional_hourly/year_2021.rds", "regional_hourly/year_2022.rds", "regional_hourly/year_2023.rds", "regional_hourly/year_2024.rds", "regional_hourly/year_2025.rds", "regional_hourly/year_2026.rds"],
     "measurement_daily_rows": 1026845,
     "measurements": ["co", "humidity", "no2", "o3", "pm10", "pm25", "so2", "temperature", "tvoc"],
@@ -70,9 +70,9 @@
         "metric": "computed_daily_avg_ug_m3",
         "data_source": "Dallas AQMesh",
         "observations": 104,
-        "mae": 3.8783,
-        "rmse": 4.9993,
-        "bias": 1.6417
+        "mae": 3.8931,
+        "rmse": 5.0086,
+        "bias": 1.6439
       },
       {
         "metric": "computed_daily_avg_ug_m3",
@@ -86,9 +86,9 @@
         "metric": "computed_daily_max_ug_m3",
         "data_source": "Dallas AQMesh",
         "observations": 105,
-        "mae": 8.5795,
-        "rmse": 10.9757,
-        "bias": 3.6187
+        "mae": 8.6462,
+        "rmse": 11.0065,
+        "bias": 3.6142
       },
       {
         "metric": "computed_daily_max_ug_m3",
@@ -101,10 +101,10 @@
       {
         "metric": "hourly",
         "data_source": "Dallas AQMesh",
-        "observations": 77,
-        "mae": 4.2315,
-        "rmse": 6.9049,
-        "bias": 0.9112
+        "observations": 75,
+        "mae": 4.3397,
+        "rmse": 7.008,
+        "bias": 0.8081
       },
       {
         "metric": "hourly",
@@ -125,13 +125,13 @@
       "spatial_validation": "spatial_validation.rds"
     },
     "file_sha256": {
-      "regional_daily.rds": "426acc793ddab01bc6e6bb2bc60970e583b1c1eac0138eaa40e2c4688af8ac8c",
-      "regional_reach.rds": "5e795c9eba0fe052d54e41f835827167dd16b81149625e45431ec77970e0ab08",
+      "regional_daily.rds": "23b7c89b3d267d72316aa1c948a50938677bfb121517cbfa508c3270e68f40c4",
+      "regional_reach.rds": "c4b0495aab26a32c4fcacbcd594d9d87f2b0dc540bb6427f272b3457059b22a0",
       "regional_event_links.rds": "25c1970974395c5f1ab47404bc2b39a3948937b26b40b9bc858042de53cb91ad",
-      "regional_measurement_daily.rds": "578f27077782ed116a3ce77043c0c012f62d4633846b4f0b61e33f2b3f17b355",
-      "regional_hourly_index.rds": "7b9891555d36b03c2a3b034398fb014c12cea75bb6728d21be2705b067ca8026",
-      "spatial_support.rds": "1402f2c7a4d68f82e140c531b1c33efc54ffc8ee20ad983d8e0ca92f6a3d3ec6",
-      "spatial_validation.rds": "3ca4d2185305f915a8da7be56cd92de54d8b6b79c685ae157939b6d69cab1fcc",
+      "regional_measurement_daily.rds": "f6ee5e7c5955ce546c1f9b8643082fcca3f5ca20019b15ba072058d2b914a317",
+      "regional_hourly_index.rds": "a4fbd50a6d3a36c8fc528819f27e448f3b9ebd9ee7ddcdbacfa6990f8d644858",
+      "spatial_support.rds": "344c6849813854199d701af9d6162f1cc19ba59a1d81aa5c58775f71956ba669",
+      "spatial_validation.rds": "46a7b8944bb607d2c3566866cfffbeb1d820d5683c6b88c042248a0172bf2320",
       "regional_hourly/year_2000.rds": "a87648f14a00c1d4d34a1a4571e658305f24357be00f1b83c6bbbb015d0ade1d",
       "regional_hourly/year_2001.rds": "e7771729bee19d7d8fb0ecfe9680861514af5f9ea2324fe6a1239d5d49130bf8",
       "regional_hourly/year_2002.rds": "eb20e95a9820c014008e231561ede35d7f9bad87a3a5db3b4b87725dca73d31a",
@@ -158,7 +158,7 @@
       "regional_hourly/year_2023.rds": "d2c2464fcb521b9c737889764522dc3671cb13469fefc5d6b257df71e4bcebb4",
       "regional_hourly/year_2024.rds": "fd1e472e7aeb84bfb728ac597533db12ff81536f2b304e5362da13b9b58faec4",
       "regional_hourly/year_2025.rds": "38bfc5755da7299979d021f71f7f58a140ac8186528eff3ff074c5e3a862495a",
-      "regional_hourly/year_2026.rds": "05635171e0e7d2fab57e4d9fa622af9cf47502f058c8eaca5d3fcdb2154d64f9"
+      "regional_hourly/year_2026.rds": "01b726be08e729463de0a293f187cd0b48e97f2de0c258c842b77d9ae5ec6b59"
     }
   },
   "algorithms": {
